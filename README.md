@@ -17,7 +17,7 @@ linux-doctor "nginx failed to start"
 
 > **One-line install (Linux/macOS):**
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/NTbankey1/linux-doctor/main/scripts/install.sh | bash
+> curl -fsSL https://raw.githubusercontent.com/NTbankey1/LinuxDoctor/main/scripts/install.sh | bash
 > ```
 
 ---
@@ -27,7 +27,7 @@ linux-doctor "nginx failed to start"
 ### Easiest — One-liner (no prerequisites needed)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NTbankey1/linux-doctor/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NTbankey1/LinuxDoctor/main/scripts/install.sh | bash
 ```
 
 This installs everything: Python dependencies, trained ML models, dataset, and the `linux-doctor` command. Works on any system with `git`, `curl`, and Python 3.10+.
@@ -47,7 +47,7 @@ pip install linux-doctor  # not yet on PyPI — use the one-liner above or clone
 ### Manual (clone + setup)
 
 ```bash
-git clone https://github.com/NTbankey1/linux-doctor.git
+git clone https://github.com/NTbankey1/LinuxDoctor.git
 cd linux-doctor
 make setup
 linux-doctor "disk is full on /var"

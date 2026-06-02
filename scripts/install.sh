@@ -8,7 +8,7 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/NTbankey1/linux-doctor/main/scripts/install.sh | bash
 # ──────────────────────────────────────────────────────────
 
-REPO="NTbankey1/linux-doctor"
+REPO="NTbankey1/LinuxDoctor"
 BRANCH="main"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.linux-doctor}"
 PYTHON="${PYTHON:-python3}"
