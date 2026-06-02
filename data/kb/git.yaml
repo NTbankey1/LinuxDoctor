@@ -194,7 +194,6 @@ rules:
       - "conflict"
       - "xung đột git"
       - "merge conflict"
-      - "conflict"
       - "automatic merge failed"
       - "unmerged files"
       - "merge failed"

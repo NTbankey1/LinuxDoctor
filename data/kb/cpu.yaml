@@ -131,16 +131,20 @@ rules:
       - "virtual machine"
       - "vm cpu"
       - "hypervisor"
-      - "slow"
+      - "cpu steal"
     hypotheses:
       - id: "cpu_steal_contention"
         description: "Hypervisor CPU overcommit causing steal time"
         confidence: 0.65
     evidence_gathering:
       - hypothesis_id: "cpu_steal_contention"
-        command: "top -bn1 2>/dev/null | grep '%Cpu' || mpstat 1 1 2>/dev/null | tail -1"
-        parser_regex: "(?P<steal_pct>\\d+\\.\\d+)\\s+(?P<iowait_pct>\\d+\\.\\d+)$"
+        command: "top -bn1 2>/dev/null | awk '/%Cpu/{for(i=1;i<=NF;i++) if($i==\"st,\"||$i==\"st\") print $(i-1)}' || echo 'NA'"
+        parser_regex: "(?P<steal_pct>\\d+\\.\\d+|NA)"
         fact_key: "cpu_steal"
+      - hypothesis_id: "cpu_steal_contention"
+        command: "top -bn1 2>/dev/null | awk '/%Cpu/{for(i=1;i<=NF;i++) if($i==\"wa,\"||$i==\"wa\") print $(i-1)}' || echo 'NA'"
+        parser_regex: "(?P<iowait_pct>\\d+\\.\\d+|NA)"
+        fact_key: "cpu_iowait"
       - hypothesis_id: "cpu_steal_contention"
         command: "cat /proc/stat | grep '^cpu ' | head -1"
         parser_regex: "cpu\\s+(?P<user>\\d+)\\s+(?P<nice>\\d+)\\s+(?P<system>\\d+)\\s+(?P<idle>\\d+)\\s+(?P<iowait>\\d+)\\s+(?P<irq>\\d+)\\s+(?P<softirq>\\d+)\\s+(?P<steal>\\d+)"
@@ -153,8 +157,8 @@ rules:
       - hypothesis_id: "cpu_steal_contention"
         condition:
           fact: "cpu_steal"
-          operator: "is_not_empty"
-          value: ""
+          operator: "not_equals"
+          value: "NA"
         root_cause: "CPU steal time is {{cpu_steal.steal_pct}}%. This indicates the hypervisor is overcommitting CPU resources. The VM is waiting for physical CPU cycles."
         recommended_fixes:
           - command: "lscpu | grep -i '^CPU(s)' && echo '---' && echo 'Total load:' && uptime"

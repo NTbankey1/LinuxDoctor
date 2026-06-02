@@ -13,7 +13,6 @@ rules:
       - "access denied"
       - "permission denied"
       - "cannot access"
-      - "access denied"
       - "EACCES"
       - "13: Permission denied"
       - "open() failed"
@@ -26,11 +25,11 @@ rules:
         confidence: 0.30
     evidence_gathering:
       - hypothesis_id: "wrong_file_owner"
-        command: "stat -c '%U %G' /var/log/nginx/error.log 2>&1 || stat -c '%U %G' /etc/nginx/nginx.conf 2>&1 || echo 'STAT_FAILED'"
+        command: "stat -c '%U %G' /etc/nginx/nginx.conf 2>&1 || stat -c '%U %G' /etc/ssh/sshd_config 2>&1 || echo 'STAT_FAILED'"
         parser_regex: "(?P<owner>\\S+)\\s+(?P<group>\\S+)"
         fact_key: "file_owner_group"
       - hypothesis_id: "wrong_file_mode"
-        command: "stat -c '%a %A' /var/log/nginx/error.log 2>&1 || stat -c '%a %A' /etc/nginx/nginx.conf 2>&1 || echo 'STAT_FAILED'"
+        command: "stat -c '%a %A' /etc/nginx/nginx.conf 2>&1 || stat -c '%a %A' /etc/ssh/sshd_config 2>&1 || echo 'STAT_FAILED'"
         parser_regex: "(?P<mode>\\d+)\\s+(?P<perms>[drwx-]{10})"
         fact_key: "file_mode_perms"
       - hypothesis_id: "wrong_file_owner"

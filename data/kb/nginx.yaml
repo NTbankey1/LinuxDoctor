@@ -225,11 +225,11 @@ rules:
           value: ""
         root_cause: "Nginx upstream failed: {{upstream_errors.upstream_error}}. Upstream configured as {{upstream_config.upstream_url}}."
         recommended_fixes:
-          - command: "curl -sI -m 5 {{upstream_config.upstream_url}} 2>&1 | head -5"
-            explanation: "Test upstream connectivity directly to see if the backend is reachable"
+          - command: "UPSTREAM_URL=$(grep -h 'proxy_pass' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 | awk '{print $2}' | tr -d ';'); if [ -n \"$UPSTREAM_URL\" ]; then curl -sI -m 5 \"$UPSTREAM_URL\" 2>&1 | head -5; else echo 'No proxy_pass found in nginx config - check upstream manually'; fi"
+            explanation: "Detect upstream URL from nginx config and test connectivity"
             is_safe: true
-          - command: "systemctl status <upstream_service> 2>/dev/null || echo 'Check upstream service status manually'"
-            explanation: "Check if the upstream backend service is running"
+          - command: "SERVICE=$(grep -h 'proxy_pass' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 | sed 's|.*//||;s|[:/].*||'); if [ -n \"$SERVICE\" ] && systemctl list-units --type=service 2>/dev/null | grep -qi \"$SERVICE\"; then systemctl status \"$SERVICE\" 2>/dev/null; else echo 'Could not auto-detect upstream service - check manually with: systemctl status <service_name>'; fi"
+            explanation: "Auto-detect and check upstream backend service status"
             is_safe: true
       - hypothesis_id: "nginx_upstream_timeout"
         condition:

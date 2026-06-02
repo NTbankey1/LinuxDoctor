@@ -20,6 +20,12 @@ rules:
       - "cannot reach"
       - "connection timed out"
       - "network error"
+      - "no internet"
+      - "wifi not working"
+      - "connection issue"
+      - "disconnected"
+      - "network issue"
+      - "ethernet not working"
     hypotheses:
       - id: "interface_admin_down"
         description: "Network interface is administratively down"
@@ -115,9 +121,10 @@ rules:
       - "port closed"
       - "port unavailable"
       - "cannot connect"
-      - "port"
       - "address already in use"
       - "bind failed"
+      - "port in use"
+      - "port conflict"
     hypotheses:
       - id: "port_not_listening"
         description: "Service is not listening on the expected port"
@@ -178,6 +185,8 @@ rules:
       - "slow network"
       - "network slow"
       - "connection drops"
+      - "network lag"
+      - "high ping"
     hypotheses:
       - id: "network_congestion"
         description: "Network congestion causing packet loss or high latency"

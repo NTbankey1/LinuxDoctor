@@ -18,7 +18,8 @@ rules:
       - "service not running"
       - "exited with code"
       - "status=1"
-      - "error"
+      - "exit code error"
+      - "systemctl status failed"
     hypotheses:
       - id: "service_exit_failure"
         description: "Service unit exited with non-zero exit code"

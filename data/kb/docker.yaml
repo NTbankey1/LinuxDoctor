@@ -70,6 +70,12 @@ rules:
       - "docker daemon not started"
       - "docker: connect"
       - "connection refused"
+      - "docker daemon"
+      - "docker start"
+      - "docker not"
+      - "docker fail"
+      - "docker error"
+      - "docker logs"
     hypotheses:
       - id: "docker_service_stopped"
         description: "The docker.service systemd unit is stopped"

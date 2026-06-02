@@ -17,6 +17,13 @@ rules:
       - "no route to host"
       - "cannot connect"
       - "ssh timeout"
+      - "ssh refused"
+      - "ssh error"
+      - "can't ssh"
+      - "cannot ssh"
+      - "ssh connection refused"
+      - "ssh problem"
+      - "ssh not working"
     hypotheses:
       - id: "sshd_not_running"
         description: "The SSH daemon (sshd) is not running on the target host"
@@ -85,6 +92,10 @@ rules:
       - "too many authentication failures"
       - "no supported authentication methods"
       - "key rejected"
+      - "ssh auth failed"
+      - "ssh login failed"
+      - "ssh password"
+      - "ssh passphrase"
     hypotheses:
       - id: "wrong_key_permissions"
         description: "SSH key file permissions are too permissive (should be 600)"
@@ -173,6 +184,8 @@ rules:
       - "WARNING: REMOTE HOST IDENTIFICATION"
       - "host key verification failed"
       - "fingerprint"
+      - "host key changed"
+      - "identification changed"
     hypotheses:
       - id: "host_key_mismatch"
         description: "Remote host key changed (possible MITM or host reinstall)"
