@@ -375,6 +375,33 @@ class HypothesisRanker:
             "port_conflict_443": {
                 "port_443_owner": {"match": "supports", "operator": "is_not_empty", "value": ""},
             },
+            # Docker: docker_service_stopped
+            "docker_service_stopped": {
+                "docker_daemon_status": {"match": "contradicts", "operator": "equals", "value": "active"},
+            },
+            # Docker: container_crash_loop
+            "container_crash_loop": {
+                "container_state": {"match": "supports", "operator": "is_not_empty", "value": ""},
+                "container_logs": {"match": "supports", "operator": "is_not_empty", "value": ""},
+            },
+            # Docker: container_oom_killed
+            "container_oom_killed": {
+                "container_state": {"match": "supports", "operator": "contains", "value": "oom"},
+            },
+            # Docker: docker_daemon_crashed
+            "docker_daemon_crashed": {
+                "docker_daemon_logs": {"match": "supports", "operator": "is_not_empty", "value": ""},
+                "docker_daemon_status": {"match": "contradicts", "operator": "equals", "value": "active"},
+                "docker_socket_exists": {"match": "contradicts", "operator": "not_equals", "value": "SOCKET_MISSING"},
+            },
+            # Docker: dangling_images
+            "dangling_images": {
+                "dangling_image_count": {"match": "supports", "operator": "greater_than", "value": "10"},
+            },
+            # Docker: docker_disk_full
+            "docker_disk_full": {
+                "docker_disk_use_percent": {"match": "supports", "operator": "greater_than", "value": "90"},
+            },
         }
 
     @staticmethod
@@ -395,5 +422,11 @@ class HypothesisRanker:
             },
             "nginx_not_installed": {
                 "eliminate_if_matches": {"key": "nginx_installed", "operator": "contains", "value": "NGINX_BINARY_EXISTS"},
+            },
+            "docker_service_stopped": {
+                "eliminate_if_matches": {"key": "docker_daemon_status", "operator": "equals", "value": "active"},
+            },
+            "docker_daemon_crashed": {
+                "eliminate_if_matches": {"key": "docker_daemon_status", "operator": "equals", "value": "active"},
             },
         }

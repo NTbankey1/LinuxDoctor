@@ -76,6 +76,8 @@ rules:
       - "docker fail"
       - "docker error"
       - "docker logs"
+      - "docker install"
+      - "daemon not running"
     hypotheses:
       - id: "docker_service_stopped"
         description: "The docker.service systemd unit is stopped"
@@ -239,6 +241,10 @@ rules:
       - "container keeps dying"
       - "container failed to start"
       - "docker container failed"
+      - "container"
+      - "docker container"
+      - "container error"
+      - "container not"
     hypotheses:
       - id: "container_crash_loop"
         description: "Container exits immediately due to application error"
