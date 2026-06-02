@@ -11,9 +11,10 @@ wheels/
 .venv/
 venv/
 
-# ML model artifacts
-models/*.pkl
-models/*.joblib
+# ML model artifacts (trained models are committed for zero-install)
+# Uncomment to exclude from builds:
+# models/*.pkl
+# models/*.joblib
 
 # Database
 *.db
@@ -35,6 +36,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Architecture docs (design docs, not user-facing)
+/docs/
 
 # Environment
 .env

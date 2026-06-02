@@ -1,0 +1,15 @@
+{
+  "dataset": "data/raw/linux_issues.jsonl",
+  "n_samples": 101758,
+  "n_classes": 12,
+  "vocab_size": 2440,
+  "train_size": 81407,
+  "test_size": 20351,
+  "results": {
+    "naive_bayes": 0.9949,
+    "logistic_regression": 0.9771,
+    "linear_svm": 0.9916
+  },
+  "best_model": "naive_bayes",
+  "best_f1": 0.9949
+}
