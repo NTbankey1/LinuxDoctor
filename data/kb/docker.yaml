@@ -51,10 +51,13 @@ rules:
           fact: "socket_info"
           operator: "is_empty"
           value: ""
-        root_cause: "Docker socket at /var/run/docker.sock is missing or has wrong permissions."
+        root_cause: "Docker socket is missing or inaccessible. The socket file does not exist at /var/run/docker.sock or /run/docker.sock."
         recommended_fixes:
           - command: "sudo systemctl restart docker"
             explanation: "Restart Docker daemon to recreate the socket file"
+            is_safe: false
+          - command: "sudo dockerd --debug 2>&1 | head -20"
+            explanation: "Start Docker daemon in debug mode to see why socket is not created"
             is_safe: false
 
   - rule_id: DOCKER_002
@@ -71,13 +74,9 @@ rules:
       - "docker: connect"
       - "connection refused"
       - "docker daemon"
-      - "docker start"
       - "docker not"
       - "docker fail"
       - "docker error"
-      - "docker logs"
-      - "docker install"
-      - "daemon not running"
     hypotheses:
       - id: "docker_service_stopped"
         description: "The docker.service systemd unit is stopped"

@@ -368,6 +368,9 @@ class HypothesisRanker:
             "user_not_in_docker_group": {
                 "user_groups": {"match": "supports", "operator": "not_contains", "value": "docker"},
             },
+            "docker_socket_wrong_perms": {
+                "socket_info": {"match": "supports", "operator": "is_empty", "value": ""},
+            },
             # Port conflict hypotheses
             "port_conflict_80": {
                 "port_80_owner": {"match": "supports", "operator": "is_not_empty", "value": ""},
