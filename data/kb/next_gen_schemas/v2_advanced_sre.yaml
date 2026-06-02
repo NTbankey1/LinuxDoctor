@@ -1,0 +1,574 @@
+domain: advanced_linux_troubleshooting_v2
+rules:
+  - rule_id: SYS_OOM_001
+    title: "Out-Of-Memory (OOM) Killer Invocation"
+    description: "The system exhausted available physical memory and swap space. To preserve kernel stability, the OOM killer terminated a high-memory process."
+    depends_on:
+      - kernel
+      - cgroups
+      - memory_subsystem
+    incident_triage:
+      is_down: true
+      data_loss_possible: true
+      security_compromised: false
+      production_traffic_affected: true
+      scope: isolated
+      incident_severity: critical
+    symptom_hierarchy:
+      symptom: "Database or application unexpectedly stopped running."
+      failure: "Process terminated instantly without logging an error."
+      root_cause: "System memory was fully exhausted, forcing the kernel to intervene and kill the highest memory consumer."
+      corrective_action: "Add temporary swap space or restart the service, then investigate memory leaks."
+    trigger_symptoms:
+      - "Process disappeared without logs"
+      - "Database abruptly stopped"
+      - "System temporarily hung"
+    log_patterns:
+      - "invoked oom-killer:"
+      - "Out of memory: Killed process"
+    evidence_gathering:
+      - command: "dmesg -T | grep -i 'out of memory'"
+        reason: "The kernel ring buffer logs the exact PID and name of the killed process."
+        expected_output: "No output if no OOM occurred."
+        abnormal_output: "Out of memory: Killed process 1234 (mysqld)..."
+    confidence_calculation:
+      evidence_weight: "dmesg explicitly logging an OOM kill is definitive proof."
+      contradictory_evidence: "A process can die for other reasons (SIGSEGV, SIGKILL by admin) that look similar if dmesg is not checked."
+      confidence_score: 0.99
+    false_positive_prevention:
+      possible_false_positives:
+        - "Process crashed due to a segmentation fault."
+        - "Process was manually killed with 'kill -9'."
+      verification_steps:
+        - "Verify that 'dmesg' actually contains the 'Out of memory' string at the time of the crash."
+    distribution_notes:
+      ubuntu_debian: "dmesg might require root due to 'kernel.dmesg_restrict=1'."
+      rhel_fedora: "OOM events are also commonly logged in /var/log/messages."
+    recommended_fixes:
+      - explanation: "Create a temporary swap file to provide immediate memory relief while investigating."
+        command: "fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+        risk_level: safe
+        rollback: "swapoff /swapfile && rm -f /swapfile"
+        verify:
+          - "swapon --show"
+          - "free -h"
+    operational_best_practices:
+      monitoring_improvements: "Monitor 'node_memory_MemAvailable_bytes' with Prometheus."
+      alerting_improvements: "Alert if available memory drops below 10% for 5 minutes."
+      prevention_strategies: "Use cgroup memory limits to throttle applications instead of letting them crash the host."
+      long_term_remediation: "Profile application memory usage, address memory leaks, and perform capacity planning."
+
+  - rule_id: FS_INO_001
+    title: "Inode Exhaustion"
+    description: "The filesystem has exhausted its allocation of inodes. Even if block space (gigabytes) is available, no new files or sockets can be created."
+    depends_on:
+      - filesystem
+      - block_device
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: systemic
+      incident_severity: high
+    symptom_hierarchy:
+      symptom: "Services fail to start or user cannot create a file."
+      failure: "Filesystem returns ENOSPC (No space left on device) despite 'df -h' showing free space."
+      root_cause: "A massive number of tiny files (like session files, temp caches, or mail queues) consumed all inodes."
+      corrective_action: "Identify and delete the directories containing millions of tiny files."
+    trigger_symptoms:
+      - "Cannot create file despite having free space"
+      - "MySQL fails to create socket file"
+      - "PHP sessions failing"
+    log_patterns:
+      - "No space left on device"
+    evidence_gathering:
+      - command: "df -i"
+        reason: "Checks inode usage percentages across filesystems."
+        expected_output: "IUse% should be < 80%."
+        abnormal_output: "IUse% is 100% for a specific mount point."
+    confidence_calculation:
+      evidence_weight: "df -i showing 100% IUse is definitive proof of inode exhaustion."
+      contradictory_evidence: "Block space exhaustion (df -h) throws the exact same error message."
+      confidence_score: 0.98
+    false_positive_prevention:
+      possible_false_positives:
+        - "Standard block space exhaustion (disk actually full)."
+        - "Read-only filesystem error misread as disk full."
+      verification_steps:
+        - "Run 'df -h' to confirm block space is available, then 'df -i' to confirm inodes are 100%."
+    distribution_notes:
+      ubuntu_debian: "Commonly caused by un-purged linux-image packages in /usr/src or PHP session files in /var/lib/php/sessions."
+      rhel_fedora: "Commonly caused by postfix mail queues or old kernel headers."
+    recommended_fixes:
+      - explanation: "Identify the directory with the highest number of files to target cleanup."
+        command: "find / -xdev -type d -size +100k -exec ls -1 {} \\| wc -l \\;"
+        risk_level: safe
+        rollback: "None"
+        verify:
+          - "df -i"
+      - explanation: "Delete old files from known problem directories like /var/tmp."
+        command: "find /var/tmp -type f -mtime +7 -delete"
+        risk_level: moderate
+        rollback: "Cannot rollback file deletion."
+        verify:
+          - "df -i"
+    operational_best_practices:
+      monitoring_improvements: "Monitor 'node_filesystem_files_free' metric."
+      alerting_improvements: "Alert if inode utilization exceeds 85%."
+      prevention_strategies: "Implement cron jobs to periodically clean up session and cache directories."
+      long_term_remediation: "Reformat the filesystem with a higher inode-to-block ratio (e.g., mkfs.ext4 -i) if tiny files are expected."
+
+  - rule_id: NET_PRT_001
+    title: "Ephemeral Port Exhaustion"
+    description: "The system has exhausted its local ephemeral port range. It cannot open any new outgoing TCP connections."
+    depends_on:
+      - network_stack
+      - tcp_ip
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: systemic
+      incident_severity: critical
+    symptom_hierarchy:
+      symptom: "Application fails to communicate with the database or external APIs."
+      failure: "Socket creation fails with 'Cannot assign requested address'."
+      root_cause: "High volume of short-lived outbound connections caused thousands of ports to linger in TIME_WAIT state."
+      corrective_action: "Enable TCP connection reuse or expand the ephemeral port range."
+    trigger_symptoms:
+      - "Intermittent connection failures to backend APIs"
+      - "Curl fails with local port exhaustion"
+    log_patterns:
+      - "Cannot assign requested address"
+      - "EADDRNOTAVAIL"
+    evidence_gathering:
+      - command: "ss -s"
+        reason: "Provides a summary of socket states, highlighting TIME_WAIT sockets."
+        expected_output: "TIME-WAIT count < 5,000."
+        abnormal_output: "TIME-WAIT count > 28,000 (approaching the default 32k ephemeral port range)."
+    confidence_calculation:
+      evidence_weight: "High TIME_WAIT count coupled with EADDRNOTAVAIL errors guarantees port exhaustion."
+      contradictory_evidence: "Firewall blocking outbound connections can look like API timeouts, but won't yield EADDRNOTAVAIL."
+      confidence_score: 0.95
+    false_positive_prevention:
+      possible_false_positives:
+        - "The remote service is down or rejecting connections."
+        - "DNS resolution is failing."
+      verification_steps:
+        - "Verify the 'Cannot assign requested address' error, which strictly means a local port couldn't be bound."
+    distribution_notes:
+      ubuntu_debian: "Default port range is usually 32768 to 60999."
+      rhel_fedora: "Default port range is usually 32768 to 60999."
+    recommended_fixes:
+      - explanation: "Allow the kernel to safely reuse TIME_WAIT sockets for new connections."
+        command: "sysctl -w net.ipv4.tcp_tw_reuse=1"
+        risk_level: safe
+        rollback: "sysctl -w net.ipv4.tcp_tw_reuse=0"
+        verify:
+          - "sysctl net.ipv4.tcp_tw_reuse"
+      - explanation: "Expand the ephemeral port range to allow more concurrent outbound connections."
+        command: "sysctl -w net.ipv4.ip_local_port_range='1024 65535'"
+        risk_level: safe
+        rollback: "sysctl -w net.ipv4.ip_local_port_range='32768 60999'"
+        verify:
+          - "sysctl net.ipv4.ip_local_port_range"
+    operational_best_practices:
+      monitoring_improvements: "Graph socket states (ESTABLISHED, TIME_WAIT, CLOSE_WAIT) over time."
+      alerting_improvements: "Alert if TIME_WAIT sockets exceed 20,000."
+      prevention_strategies: "Use connection pooling in the application instead of opening a new TCP connection per request."
+      long_term_remediation: "Refactor application code to use persistent HTTP/1.1 keep-alive or HTTP/2 connections."
+
+  - rule_id: NET_DNS_001
+    title: "DNS Resolution Failure"
+    description: "The system cannot resolve domain names to IP addresses, breaking outbound communication to external services."
+    depends_on:
+      - network_stack
+      - systemd-resolved
+      - resolvconf
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: systemic
+      incident_severity: high
+    symptom_hierarchy:
+      symptom: "Cannot reach internet resources or internal hostnames."
+      failure: "DNS queries time out or return NXDOMAIN."
+      root_cause: "/etc/resolv.conf points to a dead stub resolver (like systemd-resolved) or an unreachable upstream DNS server."
+      corrective_action: "Fix the local resolver configuration or restart the stub resolver."
+    trigger_symptoms:
+      - "Ping to google.com fails"
+      - "Apt-get update fails with 'Temporary failure resolving'"
+    log_patterns:
+      - "Could not resolve host"
+      - "Name or service not known"
+      - "Temporary failure in name resolution"
+    evidence_gathering:
+      - command: "systemctl is-active systemd-resolved || cat /etc/resolv.conf"
+        reason: "Check if the local stub resolver is running, or what external servers are configured."
+        expected_output: "active (running) OR valid nameservers in resolv.conf."
+        abnormal_output: "inactive (dead) while resolv.conf points to 127.0.0.53."
+    confidence_calculation:
+      evidence_weight: "If resolv.conf points to 127.0.0.53 and systemd-resolved is dead, resolution is guaranteed to fail."
+      contradictory_evidence: "A network-level firewall might be blocking port 53 UDP/TCP traffic."
+      confidence_score: 0.99
+    false_positive_prevention:
+      possible_false_positives:
+        - "The network interface is down (no route to host)."
+        - "The remote DNS server is rate-limiting the host."
+      verification_steps:
+        - "Ping 8.8.8.8 to verify basic IP connectivity before diagnosing DNS."
+    distribution_notes:
+      ubuntu_debian: "Ubuntu >= 18.04 heavily relies on systemd-resolved and the 127.0.0.53 stub."
+      rhel_fedora: "Older RHEL uses NetworkManager to directly manage /etc/resolv.conf without a stub."
+    recommended_fixes:
+      - explanation: "Restart the local systemd-resolved stub resolver."
+        command: "systemctl restart systemd-resolved"
+        risk_level: safe
+        rollback: "None"
+        verify:
+          - "ping -c 1 google.com"
+      - explanation: "Temporarily bypass the stub resolver by writing directly to resolv.conf."
+        command: "rm -f /etc/resolv.conf && echo 'nameserver 8.8.8.8' > /etc/resolv.conf"
+        risk_level: moderate
+        rollback: "ln -s /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf"
+        verify:
+          - "ping -c 1 google.com"
+    operational_best_practices:
+      monitoring_improvements: "Run blackbox exporter to continually probe external DNS resolution."
+      alerting_improvements: "Alert on DNS resolution latency > 100ms or failure."
+      prevention_strategies: "Configure secondary fallback nameservers."
+      long_term_remediation: "Standardize network configurations via Ansible/Terraform to prevent manual resolv.conf drift."
+
+  - rule_id: SEC_SSH_001
+    title: "SSH Permission Denied (Publickey)"
+    description: "The SSH daemon is rejecting a valid public key due to incorrect filesystem permissions on the server side."
+    depends_on:
+      - sshd
+      - filesystem
+    incident_triage:
+      is_down: false
+      data_loss_possible: false
+      security_compromised: true
+      production_traffic_affected: false
+      scope: isolated
+      incident_severity: high
+    symptom_hierarchy:
+      symptom: "User cannot log in via SSH using their private key."
+      failure: "SSHD rejects the key and falls back to password authentication (if enabled) or drops the connection."
+      root_cause: "The user's home directory, .ssh directory, or authorized_keys file is writable by other users, violating SSH StrictModes."
+      corrective_action: "Lock down permissions on the user's .ssh directory and files."
+    trigger_symptoms:
+      - "Permission denied (publickey)"
+      - "Server unexpectedly asks for a password"
+    log_patterns:
+      - "Authentication refused: bad ownership or modes for directory"
+    evidence_gathering:
+      - command: "stat -c '%A %a %n' ~/.ssh ~/.ssh/authorized_keys"
+        reason: "Checks the exact octal permissions of the SSH configuration files."
+        expected_output: "drwx------ 700 /home/user/.ssh  and  -rw------- 600 /home/user/.ssh/authorized_keys"
+        abnormal_output: "drwxrwxrwx 777 /home/user/.ssh"
+    confidence_calculation:
+      evidence_weight: "Permissions broader than 700/600 with StrictModes=yes mathematically guarantee SSH key rejection."
+      contradictory_evidence: "The client might actually be using the wrong private key."
+      confidence_score: 0.98
+    false_positive_prevention:
+      possible_false_positives:
+        - "The public key is missing from the authorized_keys file entirely."
+        - "The key type (e.g., ssh-rsa) is deprecated and blocked by modern SSHD."
+      verification_steps:
+        - "Check /var/log/auth.log or journalctl -u ssh for 'bad ownership or modes'."
+    distribution_notes:
+      ubuntu_debian: "Logs to /var/log/auth.log."
+      rhel_fedora: "Logs to /var/log/secure."
+    recommended_fixes:
+      - explanation: "Restrict permissions so only the owner can read/write the SSH files."
+        command: "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+        risk_level: safe
+        rollback: "None"
+        verify:
+          - "stat -c '%a' ~/.ssh ~/.ssh/authorized_keys"
+    operational_best_practices:
+      monitoring_improvements: "Audit SSH logs for authentication failures."
+      alerting_improvements: "Alert on >10 failed SSH logins per minute."
+      prevention_strategies: "Use configuration management to enforce correct file permissions globally."
+      long_term_remediation: "Migrate from static SSH keys to certificate-based SSH authentication (e.g., HashiCorp Vault)."
+
+  - rule_id: SYS_CPU_001
+    title: "Process in Uninterruptible Sleep (D-State)"
+    description: "A process is blocked waiting for hardware or network I/O and cannot be killed by any signal, including SIGKILL."
+    depends_on:
+      - kernel
+      - storage_subsystem
+      - nfs
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: isolated
+      incident_severity: high
+    symptom_hierarchy:
+      symptom: "System load average is extremely high (e.g., 50.0) but CPU usage is 0%."
+      failure: "Process ignores 'kill -9' and hangs indefinitely."
+      root_cause: "The process made a system call to read/write hardware (often a dead NFS mount or dying disk) that never returned."
+      corrective_action: "Resolve the underlying hardware/network issue, or forcibly unmount the dead resource."
+    trigger_symptoms:
+      - "Load average spikes without CPU usage"
+      - "Process cannot be killed"
+      - "df -h hangs indefinitely"
+    log_patterns:
+      - "task .* blocked for more than 120 seconds"
+      - "echo 0 > /proc/sys/kernel/hung_task_timeout_secs disables this message"
+    evidence_gathering:
+      - command: "ps -eo state,pid,cmd | awk '$1==\"D\"'"
+        reason: "Filters process list for 'D' (uninterruptible sleep) state."
+        expected_output: "No output."
+        abnormal_output: "D  1234  ls --color=auto /mnt/nfs_share"
+    confidence_calculation:
+      evidence_weight: "ps showing 'D' state explicitly confirms the issue."
+      contradictory_evidence: "Processes legitimately enter D state for milliseconds during normal I/O. It is only a problem if they stay there."
+      confidence_score: 0.95
+    false_positive_prevention:
+      possible_false_positives:
+        - "Heavy disk I/O causing transient D states."
+      verification_steps:
+        - "Run the ps command multiple times 5 seconds apart to ensure the PID remains stuck in D state."
+    distribution_notes:
+      ubuntu_debian: "Check dmesg for 'hung_task_timeout' backtraces."
+      rhel_fedora: "Check dmesg for 'hung_task_timeout' backtraces."
+    recommended_fixes:
+      - explanation: "Forcibly unmount a dead NFS share that is blocking the processes."
+        command: "umount -l -f /mnt/nfs_share"
+        risk_level: moderate
+        rollback: "mount /mnt/nfs_share"
+        verify:
+          - "ps -eo state,pid | grep '^D'"
+    operational_best_practices:
+      monitoring_improvements: "Monitor system load averages vs actual CPU utilization."
+      alerting_improvements: "Alert if load average > number of CPU cores * 2 for > 15 minutes."
+      prevention_strategies: "Mount NFS shares with 'soft,intr' options instead of 'hard' to allow interrupts."
+      long_term_remediation: "Investigate storage array health or network stability between the server and NFS host."
+
+  - rule_id: WEB_NGX_001
+    title: "Nginx 502 Bad Gateway"
+    description: "Nginx received a request but failed to proxy it because the upstream application server (PHP, Node, Python, etc) refused the connection."
+    depends_on:
+      - nginx
+      - application_backend
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: isolated
+      incident_severity: critical
+    symptom_hierarchy:
+      symptom: "Users see a 502 Bad Gateway page in their browser."
+      failure: "Nginx cannot establish a TCP or Unix socket connection to the upstream service."
+      root_cause: "The upstream application service is crashed, stopped, or listening on the wrong port/socket."
+      corrective_action: "Start or fix the configuration of the upstream application server."
+    trigger_symptoms:
+      - "502 Bad Gateway in browser"
+      - "API endpoints return 502 HTTP codes"
+    log_patterns:
+      - "connect() failed (111: Connection refused) while connecting to upstream"
+      - "connect() to unix:/run/php/php8.1-fpm.sock failed (2: No such file or directory)"
+    evidence_gathering:
+      - command: "tail -n 20 /var/log/nginx/error.log | grep upstream"
+        reason: "Nginx clearly logs why an upstream connection failed."
+        expected_output: "No recent upstream errors."
+        abnormal_output: "Connection refused while connecting to upstream: 127.0.0.1:8080"
+    confidence_calculation:
+      evidence_weight: "The Nginx error log 'Connection refused' perfectly identifies the failure mode."
+      contradictory_evidence: "Upstream may be running but firewall blocking local traffic."
+      confidence_score: 0.99
+    false_positive_prevention:
+      possible_false_positives:
+        - "504 Gateway Timeout (upstream connected but is too slow)."
+        - "404 Not Found (misconfigured proxy_pass)."
+      verification_steps:
+        - "Check if the upstream service is actually running via 'systemctl status <service>'."
+    distribution_notes:
+      ubuntu_debian: "PHP-FPM sockets usually live in /run/php/."
+      rhel_fedora: "PHP-FPM sockets usually live in /var/run/php-fpm/."
+    recommended_fixes:
+      - explanation: "Start the crashed backend application server (example: PHP-FPM)."
+        command: "systemctl restart php8.1-fpm"
+        risk_level: safe
+        rollback: "None"
+        verify:
+          - "systemctl is-active php8.1-fpm"
+    operational_best_practices:
+      monitoring_improvements: "Monitor Nginx HTTP response codes (group by 5xx)."
+      alerting_improvements: "Alert if 5xx error rate > 5% of total traffic."
+      prevention_strategies: "Use systemd to automatically restart the backend service on failure (Restart=always)."
+      long_term_remediation: "Investigate why the backend application crashed (OOM, segfault, unhandled exception)."
+
+  - rule_id: DK_PRM_001
+    title: "Docker Socket Permission Denied"
+    description: "The user executing docker commands does not have the necessary filesystem permissions to communicate with the Docker daemon socket."
+    depends_on:
+      - docker
+      - filesystem_permissions
+      - user_groups
+    incident_triage:
+      is_down: false
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: false
+      scope: isolated
+      incident_severity: low
+    symptom_hierarchy:
+      symptom: "Developer or CI/CD script cannot run 'docker ps'."
+      failure: "The docker CLI tool receives a 'permission denied' when trying to read/write /var/run/docker.sock."
+      root_cause: "The operating system user is not root and is not a member of the 'docker' group."
+      corrective_action: "Add the user to the docker group."
+    trigger_symptoms:
+      - "docker ps fails"
+      - "docker build fails at first step"
+    log_patterns:
+      - "dial unix /var/run/docker.sock: connect: permission denied"
+    evidence_gathering:
+      - command: "groups $USER"
+        reason: "Check group memberships for the current user."
+        expected_output: "user : user sudo docker"
+        abnormal_output: "user : user sudo"
+    confidence_calculation:
+      evidence_weight: "If user is not in 'docker' group and gets permission denied on the socket, this is 100% the root cause."
+      contradictory_evidence: "The socket file itself could have the wrong ownership (rare)."
+      confidence_score: 1.0
+    false_positive_prevention:
+      possible_false_positives:
+        - "The Docker daemon is stopped entirely (usually yields 'cannot connect to the Docker daemon')."
+      verification_steps:
+        - "Run 'sudo docker ps'. If it succeeds, the daemon is up and it's purely a permission issue."
+    distribution_notes:
+      ubuntu_debian: "Group is always named 'docker'."
+      rhel_fedora: "Group is always named 'docker', but podman is preferred over docker."
+    recommended_fixes:
+      - explanation: "Add the user to the docker group and apply the group to the current shell."
+        command: "sudo usermod -aG docker $USER && newgrp docker"
+        risk_level: safe
+        rollback: "sudo gpasswd -d $USER docker"
+        verify:
+          - "docker ps"
+    operational_best_practices:
+      monitoring_improvements: "N/A - developer environment issue."
+      alerting_improvements: "N/A"
+      prevention_strategies: "Provision developer accounts via Ansible to consistently include the docker group."
+      long_term_remediation: "Evaluate if users actually need raw docker socket access (which is equivalent to root) or if rootless docker is safer."
+
+  - rule_id: SYS_SRV_001
+    title: "Systemd Service Start Limit Hit"
+    description: "A systemd service has failed and restarted too many times within a specific time window, triggering systemd's safety circuit breaker."
+    depends_on:
+      - systemd
+    incident_triage:
+      is_down: true
+      data_loss_possible: false
+      security_compromised: false
+      production_traffic_affected: true
+      scope: isolated
+      incident_severity: high
+    symptom_hierarchy:
+      symptom: "Running 'systemctl start' immediately fails."
+      failure: "Service state is marked as 'failed' with result 'start-limit-hit'."
+      root_cause: "The application has a fatal configuration error causing it to exit immediately upon start. Systemd attempted to restart it (Restart=always) but hit the StartLimitBurst threshold."
+      corrective_action: "Fix the application configuration, reset the systemd failed state, and start again."
+    trigger_symptoms:
+      - "systemctl start does nothing"
+      - "Service refuses to run"
+    log_patterns:
+      - "Start request repeated too quickly"
+      - "Failed with result 'start-limit-hit'"
+    evidence_gathering:
+      - command: "systemctl status <service>"
+        reason: "Determine exactly why the service refuses to start."
+        expected_output: "Active: active (running)"
+        abnormal_output: "Active: failed ... start request repeated too quickly"
+    confidence_calculation:
+      evidence_weight: "The string 'start request repeated too quickly' explicitly confirms the StartLimitBurst was hit."
+      contradictory_evidence: "None."
+      confidence_score: 1.0
+    false_positive_prevention:
+      possible_false_positives:
+        - "Service is masked."
+        - "Service is disabled."
+      verification_steps:
+        - "Check 'journalctl -u <service> -n 50' to see the actual error that caused the rapid crashing."
+    distribution_notes:
+      ubuntu_debian: "Standard systemd behavior."
+      rhel_fedora: "Standard systemd behavior."
+    recommended_fixes:
+      - explanation: "Reset the circuit breaker so systemd will allow the service to be started again."
+        command: "systemctl reset-failed <service> && systemctl start <service>"
+        risk_level: safe
+        rollback: "None"
+        verify:
+          - "systemctl status <service>"
+    operational_best_practices:
+      monitoring_improvements: "Monitor systemd service states (node_systemd_unit_state metric)."
+      alerting_improvements: "Alert if any critical service enters the 'failed' state."
+      prevention_strategies: "Validate configuration files (e.g., 'nginx -t') before restarting services."
+      long_term_remediation: "Adjust StartLimitIntervalSec and StartLimitBurst in the unit file if the service legitimately takes a long time to stabilize."
+
+  - rule_id: FS_MNT_001
+    title: "Read-Only Filesystem Remount"
+    description: "The kernel detected severe corruption on a block device and remounted the filesystem as read-only to prevent further data destruction."
+    depends_on:
+      - kernel
+      - block_device
+      - filesystem
+    incident_triage:
+      is_down: true
+      data_loss_possible: true
+      security_compromised: false
+      production_traffic_affected: true
+      scope: systemic
+      incident_severity: critical
+    symptom_hierarchy:
+      symptom: "System throws errors on any file save or log write."
+      failure: "Write system calls return EROFS (Read-only file system)."
+      root_cause: "Hardware failure, VM storage latency, or a kernel bug caused filesystem journal aborts, triggering 'errors=remount-ro' behavior."
+      corrective_action: "Perform a filesystem check (fsck) and potentially replace hardware."
+    trigger_symptoms:
+      - "Cannot write to any file"
+      - "Databases crash immediately"
+      - "Tab completion throws errors"
+    log_patterns:
+      - "Remounting filesystem read-only"
+      - "EXT4-fs error"
+      - "Aborting journal on device"
+    evidence_gathering:
+      - command: "awk '$4 ~ /ro,/ || $4 ~ /^ro$/ {print}' /proc/mounts | grep -v 'squashfs\\|tmpfs'"
+        reason: "Finds actual block devices mounted as read-only."
+        expected_output: "No physical disks listed."
+        abnormal_output: "/dev/sda1 / ext4 ro,relatime..."
+    confidence_calculation:
+      evidence_weight: "/proc/mounts is the absolute source of truth for kernel mount states."
+      contradictory_evidence: "None."
+      confidence_score: 1.0
+    false_positive_prevention:
+      possible_false_positives:
+        - "User lacks permissions to write to a specific directory."
+      verification_steps:
+        - "Try writing to /tmp. If it fails with 'Read-only file system', the root mount is compromised."
+    distribution_notes:
+      ubuntu_debian: "Often impacts AWS EC2 instances during underlying EBS volume degradation."
+      rhel_fedora: "Similar behavior, though XFS will shut down entirely instead of remounting RO."
+    recommended_fixes:
+      - explanation: "Force a filesystem check and repair, which requires the disk to be unmounted or RO."
+        command: "fsck -y /dev/sda1 && reboot"
+        risk_level: dangerous
+        rollback: "Data loss may occur during fsck. Have backups ready."
+        verify:
+          - "touch /testfile"
+    operational_best_practices:
+      monitoring_improvements: "Export /proc/mounts data via node_exporter."
+      alerting_improvements: "Alert CRITICAL if any ext4/xfs filesystem transitions from 'rw' to 'ro'."
+      prevention_strategies: "Ensure underlying storage redundancy (RAID/EBS)."
+      long_term_remediation: "Migrate the server to new hardware if physical disk sectors are failing."

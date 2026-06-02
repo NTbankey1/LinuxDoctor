@@ -1,0 +1,907 @@
+domain: advanced_linux_troubleshooting
+rules:
+  - rule_id: SYS_001
+    severity: CRITICAL
+    confidence: 0.98
+    title: "Out-Of-Memory (OOM) Killer Invocation"
+    description: "The system exhausted available memory and swap, causing the kernel to kill a process to reclaim memory."
+    trigger_symptoms:
+      - "Process disappeared without logs"
+      - "Database abruptly stopped"
+      - "System temporarily hung"
+    alternative_phrases:
+      - "Killed message"
+      - "OOM kill"
+    log_patterns:
+      - "invoked oom-killer:"
+      - "Out of memory: Killed process"
+    error_messages:
+      - "Killed"
+    evidence_gathering:
+      - command: "dmesg -T | grep -i oom"
+        reason: "Check kernel ring buffer for OOM events"
+        expected_output: ""
+        abnormal_output: "Out of memory: Killed process..."
+        root_cause_analysis:
+          logic: "IF abnormal_output IS PRESENT THEN system ran out of memory."
+          conclusion: "Memory starvation led to the kernel terminating the highest memory consumer."
+    recommended_fixes:
+      - explanation: "Create or increase swap space to handle memory spikes."
+        command: "fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+        rollback: "swapoff /swapfile && rm -f /swapfile"
+        risk_level: "LOW"
+        verify:
+          - "free -h"
+
+  - rule_id: SYS_002
+    severity: CRITICAL
+    confidence: 0.95
+    title: "Disk Space 100% Full"
+    description: "A filesystem has reached 100% capacity, preventing further writes."
+    trigger_symptoms:
+      - "Cannot save files"
+      - "Services crashing on startup"
+      - "Corrupted databases"
+    alternative_phrases:
+      - "disk full"
+      - "no space"
+    log_patterns:
+      - "No space left on device"
+      - "write error: No space left on device"
+    error_messages:
+      - "No space left on device"
+    evidence_gathering:
+      - command: "df -h"
+        reason: "Check disk usage across all mounted filesystems"
+        expected_output: "Use% < 90%"
+        abnormal_output: "Use% at 100% for a mount point"
+        root_cause_analysis:
+          logic: "IF Use% is 100% THEN disk is full."
+          conclusion: "Logs, data, or dangling files have consumed all block space on the filesystem."
+    recommended_fixes:
+      - explanation: "Identify largest directories to find space hogs."
+        command: "du -sh /* 2>/dev/null | sort -rh | head -10"
+        rollback: "None"
+        risk_level: "NONE"
+        verify:
+          - "df -h"
+
+  - rule_id: SYS_003
+    severity: HIGH
+    confidence: 0.95
+    title: "Inode Exhaustion"
+    description: "The filesystem has run out of inodes, meaning no new files can be created, even if block space is available."
+    trigger_symptoms:
+      - "Cannot create file despite having free space"
+      - "Session creation failures"
+    alternative_phrases:
+      - "out of inodes"
+    log_patterns:
+      - "No space left on device"
+    error_messages:
+      - "No space left on device"
+    evidence_gathering:
+      - command: "df -i"
+        reason: "Check inode usage percentages"
+        expected_output: "IUse% < 90%"
+        abnormal_output: "IUse% at 100%"
+        root_cause_analysis:
+          logic: "IF IUse% is 100% THEN inode exhaustion occurred."
+          conclusion: "Too many small files (often session files or logs) were created, exhausting the inode table."
+    recommended_fixes:
+      - explanation: "Find directories with massive numbers of files and clean them up."
+        command: "find / -xdev -type d -size +100k -exec ls -1 {} \\| wc -l \\;"
+        rollback: "None"
+        risk_level: "MEDIUM"
+        verify:
+          - "df -i"
+
+  - rule_id: NET_001
+    severity: HIGH
+    confidence: 0.90
+    title: "Ephemeral Port Exhaustion"
+    description: "The system has run out of local ports for outgoing connections, usually due to too many TIME_WAIT sockets."
+    trigger_symptoms:
+      - "Cannot connect to external services"
+      - "Intermittent connection failures"
+    alternative_phrases:
+      - "Cannot assign requested address"
+    log_patterns:
+      - "Cannot assign requested address"
+    error_messages:
+      - "Cannot assign requested address"
+    evidence_gathering:
+      - command: "ss -s"
+        reason: "Check socket statistics for TIME_WAIT count"
+        expected_output: "TIME-WAIT < 5000"
+        abnormal_output: "TIME-WAIT > 20000"
+        root_cause_analysis:
+          logic: "IF TIME-WAIT count is near ephemeral port range limit THEN port exhaustion."
+          conclusion: "High frequency of short-lived connections caused the port range to deplete."
+    recommended_fixes:
+      - explanation: "Enable TCP connection reuse for TIME_WAIT sockets."
+        command: "sysctl -w net.ipv4.tcp_tw_reuse=1"
+        rollback: "sysctl -w net.ipv4.tcp_tw_reuse=0"
+        risk_level: "LOW"
+        verify:
+          - "sysctl net.ipv4.tcp_tw_reuse"
+
+  - rule_id: DNS_001
+    severity: HIGH
+    confidence: 0.95
+    title: "DNS Resolution Failure"
+    description: "System cannot resolve domain names to IP addresses."
+    trigger_symptoms:
+      - "Cannot ping domains"
+      - "Curl fails with couldn't resolve host"
+    alternative_phrases:
+      - "Name or service not known"
+      - "Temporary failure in name resolution"
+    log_patterns:
+      - "Could not resolve host"
+      - "Name or service not known"
+    error_messages:
+      - "Name or service not known"
+    evidence_gathering:
+      - command: "cat /etc/resolv.conf"
+        reason: "Check configured nameservers"
+        expected_output: "nameserver 8.8.8.8"
+        abnormal_output: "nameserver 127.0.0.53 (but systemd-resolved is dead)"
+        root_cause_analysis:
+          logic: "IF /etc/resolv.conf is empty OR nameserver is unreachable THEN DNS fails."
+          conclusion: "systemd-resolved disabled or /etc/resolv.conf points to stale/unreachable nameserver."
+    recommended_fixes:
+      - explanation: "Restart systemd-resolved to restore local stub resolver."
+        command: "systemctl restart systemd-resolved"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "ping -c 1 google.com"
+
+  - rule_id: SSH_001
+    severity: CRITICAL
+    confidence: 0.99
+    title: "SSH Connection Refused"
+    description: "The SSH service is not accepting connections, either because it's down or blocked by a firewall."
+    trigger_symptoms:
+      - "Cannot SSH into server"
+    alternative_phrases:
+      - "Connection refused"
+    log_patterns:
+      - "Connection refused"
+    error_messages:
+      - "Connection refused"
+    evidence_gathering:
+      - command: "systemctl status ssh || systemctl status sshd"
+        reason: "Check if the SSH daemon is running"
+        expected_output: "Active: active (running)"
+        abnormal_output: "Active: inactive (dead)"
+        root_cause_analysis:
+          logic: "IF SSH status is inactive THEN connection is refused."
+          conclusion: "The SSH daemon has stopped or crashed."
+    recommended_fixes:
+      - explanation: "Start the SSH service."
+        command: "systemctl start sshd"
+        rollback: "systemctl stop sshd"
+        risk_level: "LOW"
+        verify:
+          - "systemctl status sshd"
+
+  - rule_id: SSH_002
+    severity: HIGH
+    confidence: 0.98
+    title: "SSH Permission Denied (Publickey)"
+    description: "SSH login rejected due to invalid keys or incorrect permissions on ~/.ssh directory."
+    trigger_symptoms:
+      - "SSH asks for password when key is expected"
+      - "Permission denied (publickey)"
+    alternative_phrases:
+      - "SSH key not working"
+    log_patterns:
+      - "Authentication refused: bad ownership or modes"
+    error_messages:
+      - "Permission denied (publickey)"
+    evidence_gathering:
+      - command: "ls -ld ~/.ssh && ls -l ~/.ssh/authorized_keys"
+        reason: "Check permissions of SSH directory and authorized_keys"
+        expected_output: "drwx------ for .ssh and -rw------- for authorized_keys"
+        abnormal_output: "Permissions are too open (e.g., 777)"
+        root_cause_analysis:
+          logic: "IF permissions are > 700 for .ssh OR > 600 for authorized_keys THEN SSH daemon rejects the key."
+          conclusion: "StrictModes in sshd_config prevents login when user's key files are writable by others."
+    recommended_fixes:
+      - explanation: "Correct the permissions for the .ssh directory and key file."
+        command: "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "ls -ld ~/.ssh"
+
+  - rule_id: CPU_001
+    severity: HIGH
+    confidence: 0.90
+    title: "Process in Uninterruptible Sleep (D-State)"
+    description: "A process is stuck waiting for hardware or disk I/O and cannot be killed."
+    trigger_symptoms:
+      - "Load average is unusually high but CPU usage is low"
+      - "Process ignores SIGKILL (kill -9)"
+    alternative_phrases:
+      - "D state"
+      - "stuck process"
+    log_patterns:
+      - "task .* blocked for more than 120 seconds"
+    error_messages:
+      - "blocked for more than 120 seconds"
+    evidence_gathering:
+      - command: "ps -eo state,pid,cmd | grep '^D'"
+        reason: "Find processes in D (uninterruptible sleep) state"
+        expected_output: "No output"
+        abnormal_output: "D <PID> <CMD>"
+        root_cause_analysis:
+          logic: "IF D-state processes exist THEN system load is artificially high."
+          conclusion: "Process is waiting on unresponsive I/O, often a dead NFS mount or failing disk."
+    recommended_fixes:
+      - explanation: "Identify the blocked resource (e.g., umount dead NFS)."
+        command: "umount -l /mnt/dead_nfs"
+        rollback: "mount -a"
+        risk_level: "MEDIUM"
+        verify:
+          - "ps -eo state,pid | grep '^D'"
+
+  - rule_id: CPU_002
+    severity: MEDIUM
+    confidence: 0.95
+    title: "Zombie Process Accumulation"
+    description: "Child processes that have terminated but their parent hasn't read their exit status."
+    trigger_symptoms:
+      - "Process list is very long"
+      - "Top shows high number of zombie tasks"
+    alternative_phrases:
+      - "defunct process"
+    log_patterns:
+      - "defunct"
+    error_messages:
+      - "<defunct>"
+    evidence_gathering:
+      - command: "ps aux | awk '{ print $8 \" \" $0 }' | grep -w Z"
+        reason: "Find zombie processes"
+        expected_output: "No output"
+        abnormal_output: "Z <PID> ... <defunct>"
+        root_cause_analysis:
+          logic: "IF Zombie processes exist THEN the parent process is failing to reap them."
+          conclusion: "A badly programmed parent process is leaking child processes."
+    recommended_fixes:
+      - explanation: "Kill the parent process of the zombies to let init (PID 1) reap them."
+        command: "kill -9 <PARENT_PID>"
+        rollback: "None"
+        risk_level: "MEDIUM"
+        verify:
+          - "top -b -n 1 | grep zombie"
+
+  - rule_id: CPU_003
+    severity: CRITICAL
+    confidence: 0.90
+    title: "High IOWait CPU Time"
+    description: "CPU is idle but waiting for disk I/O to complete, indicating a disk bottleneck."
+    trigger_symptoms:
+      - "System feels extremely sluggish"
+      - "Disk heavy operations take forever"
+    alternative_phrases:
+      - "high iowait"
+    log_patterns:
+      - "N/A"
+    error_messages:
+      - "N/A"
+    evidence_gathering:
+      - command: "vmstat 1 3 | awk '{print $16}' | tail -1"
+        reason: "Measure CPU iowait percentage"
+        expected_output: "0-5"
+        abnormal_output: " > 20"
+        root_cause_analysis:
+          logic: "IF iowait > 20% THEN the disk subsystem is the bottleneck."
+          conclusion: "Disk I/O throughput is saturated, causing processes to wait."
+    recommended_fixes:
+      - explanation: "Use iotop to find the offending process doing excessive disk I/O."
+        command: "iotop -o -b -n 1"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "vmstat 1 3"
+
+  - rule_id: CPU_004
+    severity: HIGH
+    confidence: 0.95
+    title: "High CPU Steal Time"
+    description: "In a virtualized environment, the hypervisor is taking CPU cycles away from this VM."
+    trigger_symptoms:
+      - "App performance degraded for no apparent internal reason"
+    alternative_phrases:
+      - "cpu steal"
+      - "st time"
+    log_patterns:
+      - "N/A"
+    error_messages:
+      - "N/A"
+    evidence_gathering:
+      - command: "top -b -n 1 | grep '%Cpu' | awk '{print $16}'"
+        reason: "Measure CPU steal time percentage"
+        expected_output: "0.0"
+        abnormal_output: "> 5.0"
+        root_cause_analysis:
+          logic: "IF steal time > 5% THEN the cloud host is overprovisioned."
+          conclusion: "Noisy neighbor syndrome; other VMs on the physical host are hogging resources."
+    recommended_fixes:
+      - explanation: "Resize or migrate the VM to a different underlying host."
+        command: "echo 'Contact Cloud Provider to migrate VM'"
+        rollback: "None"
+        risk_level: "NONE"
+        verify:
+          - "top -b -n 1"
+
+  - rule_id: SRV_001
+    severity: HIGH
+    confidence: 0.99
+    title: "Systemd Service Start Limit Hit"
+    description: "A systemd service has crashed too many times in a short period and is now blocked from restarting."
+    trigger_symptoms:
+      - "Service won't start"
+      - "systemctl start does nothing"
+    alternative_phrases:
+      - "start request repeated too quickly"
+    log_patterns:
+      - "Start request repeated too quickly"
+      - "Failed with result 'start-limit-hit'"
+    error_messages:
+      - "start-limit-hit"
+    evidence_gathering:
+      - command: "systemctl status <service>"
+        reason: "Check why service won't start"
+        expected_output: "Active"
+        abnormal_output: "start request repeated too quickly"
+        root_cause_analysis:
+          logic: "IF start-limit-hit THEN the service has a fundamental misconfiguration crashing it instantly."
+          conclusion: "Systemd's StartLimitIntervalSec/StartLimitBurst protection engaged."
+    recommended_fixes:
+      - explanation: "Reset the failed state so the service can be attempted again after fixing the config."
+        command: "systemctl reset-failed <service> && systemctl start <service>"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "systemctl status <service>"
+
+  - rule_id: WEB_001
+    severity: HIGH
+    confidence: 0.95
+    title: "Nginx 502 Bad Gateway"
+    description: "Nginx cannot communicate with the backend application server (e.g., PHP-FPM, Node.js)."
+    trigger_symptoms:
+      - "Browser shows 502 Bad Gateway"
+    alternative_phrases:
+      - "bad gateway"
+      - "502 error"
+    log_patterns:
+      - "connect() failed (111: Connection refused) while connecting to upstream"
+    error_messages:
+      - "502 Bad Gateway"
+    evidence_gathering:
+      - command: "tail -n 20 /var/log/nginx/error.log"
+        reason: "Look for upstream connection failures"
+        expected_output: "No connection refused errors"
+        abnormal_output: "Connection refused while connecting to upstream"
+        root_cause_analysis:
+          logic: "IF Connection refused THEN the backend is down or listening on the wrong port."
+          conclusion: "Nginx is working, but the backend application server is offline."
+    recommended_fixes:
+      - explanation: "Start the backend application service (e.g., php-fpm)."
+        command: "systemctl restart php8.1-fpm"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "systemctl status php8.1-fpm"
+
+  - rule_id: WEB_002
+    severity: HIGH
+    confidence: 0.95
+    title: "Nginx 413 Request Entity Too Large"
+    description: "A client tried to upload a file larger than Nginx's client_max_body_size limit."
+    trigger_symptoms:
+      - "File uploads fail"
+    alternative_phrases:
+      - "413 error"
+      - "upload failed"
+    log_patterns:
+      - "client intended to send too large body"
+    error_messages:
+      - "413 Request Entity Too Large"
+    evidence_gathering:
+      - command: "grep -i 'too large body' /var/log/nginx/error.log"
+        reason: "Check Nginx errors for upload limits"
+        expected_output: "No output"
+        abnormal_output: "client intended to send too large body"
+        root_cause_analysis:
+          logic: "IF client intended to send too large body THEN client_max_body_size is too small."
+          conclusion: "Nginx blocked the request payload before it reached the backend."
+    recommended_fixes:
+      - explanation: "Increase client_max_body_size in nginx.conf."
+        command: "sed -i 's/client_max_body_size .*/client_max_body_size 50M;/g' /etc/nginx/nginx.conf && nginx -s reload"
+        rollback: "Revert nginx.conf to previous value."
+        risk_level: "LOW"
+        verify:
+          - "nginx -t"
+
+  - rule_id: DK_001
+    severity: HIGH
+    confidence: 0.98
+    title: "Docker Socket Permission Denied"
+    description: "The user executing docker commands does not have permissions to read/write the Docker Unix socket."
+    trigger_symptoms:
+      - "docker ps fails"
+    alternative_phrases:
+      - "permission denied while trying to connect to the Docker daemon socket"
+    log_patterns:
+      - "dial unix /var/run/docker.sock: connect: permission denied"
+    error_messages:
+      - "permission denied while trying to connect"
+    evidence_gathering:
+      - command: "groups | grep docker"
+        reason: "Check if current user is in the docker group"
+        expected_output: "docker"
+        abnormal_output: "No output"
+        root_cause_analysis:
+          logic: "IF user is NOT in docker group THEN socket access is denied."
+          conclusion: "User lacks privileges to talk to the Docker daemon."
+    recommended_fixes:
+      - explanation: "Add the current user to the docker group."
+        command: "sudo usermod -aG docker $USER && newgrp docker"
+        rollback: "sudo gpasswd -d $USER docker"
+        risk_level: "LOW"
+        verify:
+          - "docker ps"
+
+  - rule_id: K8S_001
+    severity: CRITICAL
+    confidence: 0.95
+    title: "Kubernetes Node NotReady"
+    description: "A Kubernetes node is marked as NotReady, causing pod scheduling to fail on it."
+    trigger_symptoms:
+      - "kubectl get nodes shows NotReady"
+    alternative_phrases:
+      - "node is offline"
+    log_patterns:
+      - "Kubelet stopped posting node status"
+    error_messages:
+      - "NotReady"
+    evidence_gathering:
+      - command: "systemctl status kubelet"
+        reason: "Check if the kubelet service is running on the node"
+        expected_output: "active (running)"
+        abnormal_output: "inactive (dead) or failed"
+        root_cause_analysis:
+          logic: "IF kubelet is dead THEN node status cannot be updated."
+          conclusion: "The Kubelet process crashed, disconnecting the node from the control plane."
+    recommended_fixes:
+      - explanation: "Restart the kubelet service."
+        command: "systemctl restart kubelet"
+        rollback: "None"
+        risk_level: "MEDIUM"
+        verify:
+          - "kubectl get nodes"
+
+  - rule_id: SEC_001
+    severity: CRITICAL
+    confidence: 0.99
+    title: "SSL Certificate Expired"
+    description: "An SSL/TLS certificate has passed its expiration date, causing clients to reject connections."
+    trigger_symptoms:
+      - "Browsers show security warning"
+      - "API requests fail with certificate validation errors"
+    alternative_phrases:
+      - "cert expired"
+      - "invalid certificate"
+    log_patterns:
+      - "certificate has expired"
+    error_messages:
+      - "NET::ERR_CERT_DATE_INVALID"
+    evidence_gathering:
+      - command: "echo | openssl s_client -servername localhost -connect localhost:443 2>/dev/null | openssl x509 -noout -dates"
+        reason: "Check the expiration date of the presented certificate"
+        expected_output: "notAfter is in the future"
+        abnormal_output: "notAfter is in the past"
+        root_cause_analysis:
+          logic: "IF notAfter is strictly in the past THEN certificate is expired."
+          conclusion: "Auto-renewal (like certbot) failed or the certificate was not updated manually."
+    recommended_fixes:
+      - explanation: "Renew the certificate using Certbot."
+        command: "certbot renew --quiet && systemctl reload nginx"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "certbot certificates"
+
+  - rule_id: FS_001
+    severity: CRITICAL
+    confidence: 0.95
+    title: "Read-Only Filesystem"
+    description: "The OS has remounted the root or data filesystem as read-only to protect it from corruption."
+    trigger_symptoms:
+      - "Cannot write to any file"
+      - "System throws Read-only file system errors"
+    alternative_phrases:
+      - "read only"
+      - "remounted ro"
+    log_patterns:
+      - "Remounting filesystem read-only"
+      - "EXT4-fs error"
+    error_messages:
+      - "Read-only file system"
+    evidence_gathering:
+      - command: "grep -w 'ro' /proc/mounts"
+        reason: "Check for filesystems mounted with 'ro' (read-only) flag"
+        expected_output: "No primary filesystems should be 'ro'"
+        abnormal_output: "/dev/sda1 / ext4 ro..."
+        root_cause_analysis:
+          logic: "IF root filesystem is 'ro' THEN kernel detected block errors."
+          conclusion: "Hardware failure or severe filesystem corruption triggered a safety remount."
+    recommended_fixes:
+      - explanation: "Reboot and force an fsck on the corrupted partition."
+        command: "fsck -y /dev/sda1 && reboot"
+        rollback: "None"
+        risk_level: "HIGH"
+        verify:
+          - "touch /testfile"
+
+  - rule_id: MEM_001
+    severity: MEDIUM
+    confidence: 0.90
+    title: "Memory Leak / Cgroup Exhaustion"
+    description: "A process slowly consumes all memory until hitting its cgroup limit."
+    trigger_symptoms:
+      - "Container suddenly restarts after running for days"
+    alternative_phrases:
+      - "memory growing"
+    log_patterns:
+      - "Memory cgroup out of memory"
+    error_messages:
+      - "OOMKilled"
+    evidence_gathering:
+      - command: "dmesg | grep 'Memory cgroup out of memory'"
+        reason: "Check for cgroup specific OOM kills"
+        expected_output: "No output"
+        abnormal_output: "Memory cgroup out of memory"
+        root_cause_analysis:
+          logic: "IF cgroup out of memory THEN the container exceeded its limit."
+          conclusion: "Application memory leak or insufficient memory limit set for the workload."
+    recommended_fixes:
+      - explanation: "Increase the Docker/K8s memory limit."
+        command: "docker update -m 1g <container_id>"
+        rollback: "docker update -m 512m <container_id>"
+        risk_level: "LOW"
+        verify:
+          - "docker stats --no-stream"
+
+  - rule_id: MEM_002
+    severity: HIGH
+    confidence: 0.95
+    title: "Swap Thrashing"
+    description: "System is aggressively moving memory pages between RAM and disk, destroying performance."
+    trigger_symptoms:
+      - "Extreme system lag"
+      - "Disk I/O is at 100% reading/writing to swap partition"
+    alternative_phrases:
+      - "swapping heavily"
+    log_patterns:
+      - "N/A"
+    error_messages:
+      - "N/A"
+    evidence_gathering:
+      - command: "vmstat 1 3 | tail -1 | awk '{print $7, $8}'"
+        reason: "Check swap in (si) and swap out (so) rates"
+        expected_output: "0 0"
+        abnormal_output: "High numbers like 5000 4000"
+        root_cause_analysis:
+          logic: "IF si and so are high THEN system is thrashing."
+          conclusion: "Active memory working set is larger than physical RAM."
+    recommended_fixes:
+      - explanation: "Temporarily reduce swappiness or add more physical RAM."
+        command: "sysctl vm.swappiness=10"
+        rollback: "sysctl vm.swappiness=60"
+        risk_level: "LOW"
+        verify:
+          - "vmstat 1 3"
+
+  - rule_id: FS_002
+    severity: HIGH
+    confidence: 0.99
+    title: "Too Many Open Files (File Descriptor Exhaustion)"
+    description: "A process hit the maximum number of allowed open file descriptors (ulimit -n)."
+    trigger_symptoms:
+      - "Application fails to accept new connections"
+      - "Cannot open logs"
+    alternative_phrases:
+      - "file descriptor limit"
+    log_patterns:
+      - "Too many open files"
+    error_messages:
+      - "Too many open files"
+    evidence_gathering:
+      - command: "cat /proc/sys/fs/file-nr"
+        reason: "Check system-wide open file descriptors"
+        expected_output: "Allocated << Maximum"
+        abnormal_output: "Allocated == Maximum"
+        root_cause_analysis:
+          logic: "IF allocated fd == max fd THEN system is out of file descriptors."
+          conclusion: "Process leak of file handles or extremely high concurrency without tuning."
+    recommended_fixes:
+      - explanation: "Increase the ulimit for file descriptors in limits.conf."
+        command: "echo '* soft nofile 65535' >> /etc/security/limits.conf && echo '* hard nofile 65535' >> /etc/security/limits.conf"
+        rollback: "Remove lines from limits.conf"
+        risk_level: "LOW"
+        verify:
+          - "ulimit -n"
+
+  - rule_id: SYS_005
+    severity: MEDIUM
+    confidence: 0.90
+    title: "NTP Clock Drift"
+    description: "System clock is out of sync, causing time-sensitive protocols (like TLS or OAuth) to fail."
+    trigger_symptoms:
+      - "API integrations fail with invalid timestamp"
+      - "AWS S3 requests fail with RequestTimeTooSkewed"
+    alternative_phrases:
+      - "time wrong"
+      - "clock off"
+    log_patterns:
+      - "RequestTimeTooSkewed"
+    error_messages:
+      - "Signature expired"
+    evidence_gathering:
+      - command: "timedatectl status | grep 'System clock synchronized'"
+        reason: "Check if NTP is successfully synchronizing the clock"
+        expected_output: "System clock synchronized: yes"
+        abnormal_output: "System clock synchronized: no"
+        root_cause_analysis:
+          logic: "IF synchronized is no THEN clock is drifting."
+          conclusion: "NTP service (systemd-timesyncd or chrony) is stopped or blocked by firewall."
+    recommended_fixes:
+      - explanation: "Enable and start systemd-timesyncd."
+        command: "systemctl enable --now systemd-timesyncd"
+        rollback: "systemctl stop systemd-timesyncd"
+        risk_level: "LOW"
+        verify:
+          - "timedatectl status"
+
+  - rule_id: NET_002
+    severity: HIGH
+    confidence: 0.90
+    title: "Network Ring Buffer Overrun"
+    description: "NIC is receiving packets faster than the kernel can process them, leading to dropped packets."
+    trigger_symptoms:
+      - "Packet loss under high load"
+    alternative_phrases:
+      - "dropping packets"
+    log_patterns:
+      - "rx_missed_errors"
+    error_messages:
+      - "N/A"
+    evidence_gathering:
+      - command: "ethtool -S eth0 | grep -i drop"
+        reason: "Check NIC hardware stats for dropped packets"
+        expected_output: "rx_dropped: 0"
+        abnormal_output: "rx_dropped: 15403"
+        root_cause_analysis:
+          logic: "IF rx_dropped is increasing THEN the ring buffer is overflowing."
+          conclusion: "Burst of traffic exceeded the NIC RX ring buffer size."
+    recommended_fixes:
+      - explanation: "Increase the NIC RX ring buffer size."
+        command: "ethtool -G eth0 rx 4096"
+        rollback: "ethtool -G eth0 rx 1024"
+        risk_level: "MEDIUM"
+        verify:
+          - "ethtool -g eth0"
+
+  - rule_id: NET_003
+    severity: HIGH
+    confidence: 0.95
+    title: "ARP Cache Overflow"
+    description: "The system is connected to a large subnet and the ARP table (neighbor table) is full."
+    trigger_symptoms:
+      - "Cannot communicate with new IP addresses on the local subnet"
+    alternative_phrases:
+      - "neighbor table overflow"
+    log_patterns:
+      - "neighbor table overflow!"
+    error_messages:
+      - "Network is unreachable"
+    evidence_gathering:
+      - command: "dmesg | grep 'neighbor table overflow'"
+        reason: "Check kernel logs for ARP overflow"
+        expected_output: "No output"
+        abnormal_output: "IPv4: neighbor table overflow!"
+        root_cause_analysis:
+          logic: "IF neighbor table overflow THEN gc_thresh is too small."
+          conclusion: "The ARP table limits are too low for the number of peers on the subnet."
+    recommended_fixes:
+      - explanation: "Increase the ARP table garbage collection thresholds."
+        command: "sysctl -w net.ipv4.neigh.default.gc_thresh1=1024 && sysctl -w net.ipv4.neigh.default.gc_thresh2=2048 && sysctl -w net.ipv4.neigh.default.gc_thresh3=4096"
+        rollback: "Revert to default sysctl values."
+        risk_level: "LOW"
+        verify:
+          - "sysctl net.ipv4.neigh.default.gc_thresh3"
+
+  - rule_id: NET_004
+    severity: CRITICAL
+    confidence: 0.99
+    title: "Conntrack Table Full"
+    description: "The Netfilter connection tracking table is full, dropping all new connections."
+    trigger_symptoms:
+      - "Server randomly drops new connections"
+      - "Packet loss to the server"
+    alternative_phrases:
+      - "nf_conntrack: table full"
+    log_patterns:
+      - "nf_conntrack: table full, dropping packet"
+    error_messages:
+      - "Connection timed out"
+    evidence_gathering:
+      - command: "dmesg | grep -i 'conntrack: table full'"
+        reason: "Check if the kernel is dropping packets due to conntrack limits"
+        expected_output: "No output"
+        abnormal_output: "nf_conntrack: table full, dropping packet"
+        root_cause_analysis:
+          logic: "IF table full THEN the server is tracking too many connections."
+          conclusion: "DDoS attack or extremely high legitimate concurrent connections maxed out nf_conntrack_max."
+    recommended_fixes:
+      - explanation: "Increase the conntrack maximum table size."
+        command: "sysctl -w net.netfilter.nf_conntrack_max=262144"
+        rollback: "sysctl -w net.netfilter.nf_conntrack_max=65536"
+        risk_level: "LOW"
+        verify:
+          - "sysctl net.netfilter.nf_conntrack_max"
+
+  - rule_id: SEC_002
+    severity: HIGH
+    confidence: 0.98
+    title: "Sudo Permission Denied"
+    description: "User attempts to run a privileged command but is not in the sudoers file."
+    trigger_symptoms:
+      - "Cannot use sudo"
+    alternative_phrases:
+      - "not in the sudoers file"
+    log_patterns:
+      - "user NOT in sudoers"
+    error_messages:
+      - "is not in the sudoers file. This incident will be reported."
+    evidence_gathering:
+      - command: "sudo -l"
+        reason: "Check user's sudo privileges"
+        expected_output: "User may run the following commands"
+        abnormal_output: "Sorry, user may not run sudo"
+        root_cause_analysis:
+          logic: "IF user cannot run sudo THEN they are not in the sudo/wheel group."
+          conclusion: "User account lacks administrative privileges."
+    recommended_fixes:
+      - explanation: "Log in as root and add the user to the sudo group."
+        command: "usermod -aG sudo <username>"
+        rollback: "gpasswd -d <username> sudo"
+        risk_level: "LOW"
+        verify:
+          - "groups <username>"
+
+  - rule_id: PKG_001
+    severity: MEDIUM
+    confidence: 0.99
+    title: "DPKG/APT Lock Held"
+    description: "Cannot install packages because another apt/dpkg process is running (often unattended-upgrades)."
+    trigger_symptoms:
+      - "apt install fails with lock error"
+    alternative_phrases:
+      - "Could not get lock /var/lib/dpkg/lock"
+    log_patterns:
+      - "Could not get lock"
+    error_messages:
+      - "E: Could not get lock /var/lib/dpkg/lock-frontend"
+    evidence_gathering:
+      - command: "lsof /var/lib/dpkg/lock-frontend"
+        reason: "Find which process is holding the apt lock"
+        expected_output: "No output"
+        abnormal_output: "apt-get 1234 root 3uW REG ..."
+        root_cause_analysis:
+          logic: "IF another process holds the lock THEN apt will fail."
+          conclusion: "System background updates (unattended-upgrades) are currently running."
+    recommended_fixes:
+      - explanation: "Wait for the process to finish, or safely kill it and reconfigure dpkg."
+        command: "kill -9 $(lsof -t /var/lib/dpkg/lock-frontend) && dpkg --configure -a"
+        rollback: "None"
+        risk_level: "MEDIUM"
+        verify:
+          - "apt update"
+
+  - rule_id: SYS_004
+    severity: CRITICAL
+    confidence: 0.95
+    title: "System Booting to Emergency Mode"
+    description: "A misconfigured /etc/fstab entry prevents the system from booting completely."
+    trigger_symptoms:
+      - "System stuck at 'Welcome to emergency mode'"
+    alternative_phrases:
+      - "emergency mode"
+      - "failed to mount"
+    log_patterns:
+      - "Failed to mount /mnt/data"
+      - "Dependency failed for Local File Systems"
+    error_messages:
+      - "Give root password for maintenance"
+    evidence_gathering:
+      - command: "journalctl -xb | grep -i 'failed to mount'"
+        reason: "Find out which mount point caused the boot failure"
+        expected_output: "No output"
+        abnormal_output: "Failed to mount /mnt/data."
+        root_cause_analysis:
+          logic: "IF a partition in fstab fails to mount THEN systemd halts boot."
+          conclusion: "A disk is missing, corrupted, or fstab has a syntax error."
+    recommended_fixes:
+      - explanation: "Comment out the failing mount in /etc/fstab to allow boot to continue."
+        command: "nano /etc/fstab # comment out bad line, then run: systemctl daemon-reload && exit"
+        rollback: "Uncomment when disk is fixed"
+        risk_level: "HIGH"
+        verify:
+          - "mount -a"
+
+  - rule_id: FS_003
+    severity: MEDIUM
+    confidence: 0.95
+    title: "TMPFS Full"
+    description: "The /tmp or /run filesystem (stored in RAM) is full, causing localized service failures."
+    trigger_symptoms:
+      - "Cannot write to /tmp"
+      - "Services fail to create PID files or sockets"
+    alternative_phrases:
+      - "no space in /tmp"
+    log_patterns:
+      - "No space left on device"
+    error_messages:
+      - "No space left on device"
+    evidence_gathering:
+      - command: "df -h /tmp"
+        reason: "Check usage of /tmp filesystem"
+        expected_output: "Use% < 90%"
+        abnormal_output: "Use% = 100%"
+        root_cause_analysis:
+          logic: "IF /tmp is full THEN applications cannot write temporary files."
+          conclusion: "A process dumped large files into /tmp, exhausting the tmpfs allocation (default 50% of RAM)."
+    recommended_fixes:
+      - explanation: "Find and delete large files in /tmp."
+        command: "find /tmp -type f -size +100M -delete"
+        rollback: "None"
+        risk_level: "LOW"
+        verify:
+          - "df -h /tmp"
+
+  - rule_id: DB_001
+    severity: HIGH
+    confidence: 0.90
+    title: "MySQL/MariaDB Too Many Connections"
+    description: "The database has reached its max_connections limit."
+    trigger_symptoms:
+      - "Applications report database connection errors"
+    alternative_phrases:
+      - "Too many connections"
+    log_patterns:
+      - "Data source rejected establishment of connection,  message from server: Too many connections"
+    error_messages:
+      - "Too many connections"
+    evidence_gathering:
+      - command: "mysql -e 'show variables like \"max_connections\";'"
+        reason: "Check connection limits"
+        expected_output: "151"
+        abnormal_output: "151 (and connections equal this limit)"
+        root_cause_analysis:
+          logic: "IF active connections >= max_connections THEN new connections are rejected."
+          conclusion: "Traffic spike or connection leak in the application."
+    recommended_fixes:
+      - explanation: "Dynamically increase max_connections (requires enough RAM)."
+        command: "mysql -e 'SET GLOBAL max_connections = 500;'"
+        rollback: "mysql -e 'SET GLOBAL max_connections = 151;'"
+        risk_level: "MEDIUM"
+        verify:
+          - "mysql -e 'show status like \"Threads_connected\";'"

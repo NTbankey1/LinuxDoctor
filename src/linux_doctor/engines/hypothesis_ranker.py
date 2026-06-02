@@ -100,8 +100,10 @@ class HypothesisRanker:
             prior = hyp.get("confidence", 0.5)
             description = hyp.get("description", "")
 
+            is_confirmed = hyp.get("is_confirmed", False)
+
             status, posterior, supporting, contradicting = (
-                self._evaluate_single_hypothesis(hypothesis_id, prior, facts)
+                self._evaluate_single_hypothesis(hypothesis_id, prior, facts, is_confirmed)
             )
 
             scored.append(ScoredHypothesis(
@@ -123,6 +125,7 @@ class HypothesisRanker:
         hypothesis_id: str,
         prior: float,
         facts: dict[str, str],
+        is_already_confirmed: bool = False,
     ) -> tuple[str, float, list[str], list[str]]:
         """
         Evaluate a single hypothesis against facts using hypothesis-specific
@@ -154,7 +157,7 @@ class HypothesisRanker:
         posterior = self._hypothesis_specific_update(hypothesis_id, prior, facts, supporting, contradicting)
 
         # Step 3: Determine status
-        if posterior >= 0.90 and len(contradicting) == 0:
+        if posterior >= 0.90 and len(contradicting) == 0 and (is_already_confirmed or len(supporting) > 0):
             return ("confirmed", posterior, supporting, contradicting)
         elif posterior > 0.0:
             return ("active", posterior, supporting, contradicting)
@@ -212,20 +215,24 @@ class HypothesisRanker:
                 if match_type == "supports" and is_match:
                     supporting.append(fact_key)
                     likelihood = 0.85
+                    false_positive = 0.15
                 elif match_type == "contradicts" and is_match:
                     contradicting.append(fact_key)
                     likelihood = 0.10
+                    false_positive = 0.85
                 elif match_type == "contradicts" and not is_match:
-                    # Expected contradiction NOT found → evidence is neutral
-                    likelihood = 0.15
+                    # Expected contradiction NOT found → slight support
+                    likelihood = 0.60
+                    false_positive = 0.40
                 else:
+                    # Neutral evidence (expected support not found, etc.)
                     likelihood = 0.50
+                    false_positive = 0.50
             else:
                 # Fact not in support map: irrelevant to this hypothesis
-                # Use likelihood = false_positive to keep posterior unchanged
-                likelihood = 0.15
+                likelihood = 0.50
+                false_positive = 0.50
 
-            false_positive = 0.15
             p_not_cause = 1.0 - posterior
             p_evidence = (likelihood * posterior) + (false_positive * p_not_cause)
             if p_evidence > 0:
@@ -296,7 +303,7 @@ class HypothesisRanker:
         else:
             margin = winner.posterior_confidence
 
-        if margin >= self.MARGIN_THRESHOLD or len(candidate_pool) == 1:
+        if margin >= self.MARGIN_THRESHOLD or len(candidate_pool) == 1 or winner.is_confirmed:
             return RankedDiagnosis(
                 root_cause_id=winner.hypothesis_id,
                 root_cause_desc=winner.description,
@@ -370,6 +377,12 @@ class HypothesisRanker:
             },
             "docker_socket_wrong_perms": {
                 "socket_info": {"match": "supports", "operator": "is_empty", "value": ""},
+            },
+            "docker_not_installed": {
+                "docker_installed": {"match": "contradicts", "operator": "contains", "value": "BINARY_EXISTS"},
+            },
+            "docker_already_installed": {
+                "docker_installed": {"match": "supports", "operator": "contains", "value": "BINARY_EXISTS"},
             },
             # Port conflict hypotheses
             "port_conflict_80": {

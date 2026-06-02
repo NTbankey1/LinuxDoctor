@@ -1,0 +1,276 @@
+domain: enterprise_incident_commander
+version: "3.0"
+description: "V3 Enterprise Knowledge Base modeling Senior SRE cognitive processes, temporal causality, and evidence graph structures."
+rules:
+  - rule_id: INC_DOCKER_STORAGE_001
+    title: "Docker Runtime Failure due to Root Filesystem Exhaustion"
+    description: "The container runtime became unavailable because the underlying filesystem hosting /var/lib/docker has reached 100% capacity."
+    enterprise_requirements:
+      bare_metal: "High risk of host-level lockup if /var/lib/docker is on the root partition."
+      kubernetes: "Will cause NodeNotReady status as kubelet cannot evict pods fast enough."
+      cloud_vm: "EBS volume may need emergency expansion."
+    incident_timeline:
+      - evidence_source: "package_manager_log"
+        command: "grep -i 'upgrade' /var/log/dpkg.log | tail -5"
+        rationale: "Check if a recent apt-get upgrade filled the disk."
+      - evidence_source: "service_restarts"
+        command: "journalctl -u docker.service --since '1 hour ago' | grep -i 'started\\|stopped'"
+        rationale: "Determine exactly when the docker service began failing."
+      - evidence_source: "filesystem_changes"
+        command: "find /var/lib/docker -type f -mmin -60 -size +1G"
+        rationale: "Locate massive files created in the last hour."
+    evidence_graph:
+      nodes:
+        - node_id: "node_1"
+          evidence: "docker.service inactive or flapping"
+        - node_id: "node_2"
+          evidence: "container runtime API unresponsive (Cannot connect to the Docker daemon)"
+        - node_id: "node_3"
+          evidence: "/var/lib/docker filesystem is 100% full"
+      relationships:
+        - source: "node_3"
+          target: "node_1"
+          relation: "causes"
+        - source: "node_1"
+          target: "node_2"
+          relation: "causes"
+    hypothesis_engine:
+      - hypothesis_id: "hyp_disk_full"
+        probability: 0.95
+        description: "Docker cannot operate because it cannot allocate block space for overlay2 layers or json.logs."
+        supporting_evidence:
+          - "df -h /var/lib/docker shows 100% Use"
+          - "journalctl shows 'no space left on device' for dockerd"
+        contradictory_evidence:
+          - "df -i shows inode exhaustion instead of block space exhaustion"
+      - hypothesis_id: "hyp_docker_crash"
+        probability: 0.05
+        description: "Docker crashed due to a bad configuration in daemon.json."
+        supporting_evidence:
+          - "docker.service is dead"
+        contradictory_evidence:
+          - "daemon.json hasn't been modified recently (stat /etc/docker/daemon.json)"
+    decision_tree:
+      logic: |
+        if (service_status('docker') == 'inactive'):
+          logs = get_journal('docker')
+          if ('no space left' in logs):
+            fs_usage = check_filesystem('/var/lib/docker')
+            if (fs_usage == 100):
+              root_cause = 'storage_exhaustion'
+              invoke_action('act_prune_dangling')
+            else:
+              root_cause = 'inode_exhaustion'
+          else:
+            root_cause = 'daemon_crash'
+    action_policy:
+      - action_id: "act_check_fs"
+        action_type: "collect_evidence"
+        execution_mode: "safe_auto"
+        command: "df -h /var/lib/docker && df -i /var/lib/docker"
+      - action_id: "act_prune_dangling"
+        action_type: "moderate_remediation"
+        execution_mode: "human_review"
+        command: "docker system prune -f"
+        rationale: "Safely removes unused containers and dangling images to quickly reclaim space."
+      - action_id: "act_delete_logs"
+        action_type: "high_risk_remediation"
+        execution_mode: "dangerous_manual"
+        command: "find /var/lib/docker/containers/ -name '*-json.log' -exec truncate -s 0 {} \\;"
+        rationale: "Destroys container log data without backing it up. Requires operator approval."
+    learning_feedback:
+      incident_outcome: "PENDING"
+      confirmed_root_cause: "UNCONFIRMED"
+      fix_successful: false
+      operator_feedback: ""
+    prevention_engine:
+      monitoring: "Monitor node_filesystem_avail_bytes for the /var/lib/docker mount point."
+      alerts: "Trigger warning at 80% capacity, critical at 90% capacity."
+      hardening: "Configure Docker daemon log rotation (max-size=50m, max-file=3) in daemon.json."
+      capacity_planning: "Move /var/lib/docker to a dedicated logical volume (LVM) to prevent host root disk starvation."
+      documentation: "Runbook: Handling Docker Disk Full Incidents."
+
+  - rule_id: INC_OOM_LEAK_002
+    title: "Kernel OOM Killer Invoked Due to Application Memory Leak"
+    description: "The Linux kernel Out-Of-Memory killer terminated a mission-critical process due to continuous, unconstrained memory growth over time."
+    enterprise_requirements:
+      bare_metal: "Can bring down the entire host if SSHD or systemd is killed."
+      kubernetes: "Pod will be OOMKilled by cgroup limits before host kernel panics."
+      cloud_vm: "Noisy neighbor syndrome can artificially reduce available memory if ballooning is active."
+    incident_timeline:
+      - evidence_source: "recent_deployments"
+        command: "cat /opt/app/deployment_history.log | tail -2"
+        rationale: "Determine if a new version of the app introduced a memory leak."
+      - evidence_source: "memory_growth_rate"
+        command: "sar -r 10 6"
+        rationale: "Analyze historical memory consumption trajectory."
+      - evidence_source: "kernel_dmesg_history"
+        command: "dmesg -T | grep -i oom-killer | tail -5"
+        rationale: "Determine if this is a recurring kill or an isolated event."
+    evidence_graph:
+      nodes:
+        - node_id: "node_1"
+          evidence: "Application process disappears unexpectedly"
+        - node_id: "node_2"
+          evidence: "System available memory drops to near 0MB"
+        - node_id: "node_3"
+          evidence: "dmesg shows 'Out of memory: Killed process'"
+        - node_id: "node_4"
+          evidence: "App recently deployed with new caching layer"
+      relationships:
+        - source: "node_4"
+          target: "node_2"
+          relation: "causes"
+        - source: "node_2"
+          target: "node_3"
+          relation: "causes"
+        - source: "node_3"
+          target: "node_1"
+          relation: "causes"
+    hypothesis_engine:
+      - hypothesis_id: "hyp_memory_leak"
+        probability: 0.90
+        description: "The application is leaking memory, eventually starving the host."
+        supporting_evidence:
+          - "dmesg explicitly shows OOM killer terminating the app"
+          - "Prometheus shows linear memory growth over the last 24 hours"
+        contradictory_evidence:
+          - "Memory spiked instantly in 2 seconds, which suggests a load spike rather than a slow leak"
+      - hypothesis_id: "hyp_swap_disabled"
+        probability: 0.10
+        description: "Swap was accidentally disabled, reducing the system's tolerance for memory spikes."
+        supporting_evidence:
+          - "swapon -s shows no active swap"
+        contradictory_evidence:
+          - "App still exceeded physical RAM limits"
+    decision_tree:
+      logic: |
+        if ('Out of memory' in get_dmesg()):
+          app_pid = get_killed_pid_from_dmesg()
+          if (is_cgroup_oom(app_pid)):
+            root_cause = 'cgroup_memory_limit_exceeded'
+            invoke_action('act_raise_cgroup_limit')
+          else:
+            root_cause = 'host_memory_exhaustion'
+            if (has_recent_deploy()):
+              invoke_action('act_rollback_deploy')
+            else:
+              invoke_action('act_add_swap')
+    action_policy:
+      - action_id: "act_check_dmesg"
+        action_type: "collect_evidence"
+        execution_mode: "safe_auto"
+        command: "dmesg -T | grep -A 10 -i oom"
+      - action_id: "act_add_swap"
+        action_type: "moderate_remediation"
+        execution_mode: "human_review"
+        command: "fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+        rationale: "Provides emergency memory buffer to prevent immediate re-crashing."
+      - action_id: "act_rollback_deploy"
+        action_type: "high_risk_remediation"
+        execution_mode: "dangerous_manual"
+        command: "/opt/scripts/rollback_app.sh"
+        rationale: "Reverts application to previous version. May cause schema mismatches."
+    learning_feedback:
+      incident_outcome: "PENDING"
+      confirmed_root_cause: "UNCONFIRMED"
+      fix_successful: false
+      operator_feedback: ""
+    prevention_engine:
+      monitoring: "Monitor node_memory_MemAvailable_bytes and container_memory_usage_bytes."
+      alerts: "Alert on rapid first-derivative memory growth (predictive alerting)."
+      hardening: "Implement vm.panic_on_oom=0 (default) to ensure only the offending process dies, not the host."
+      capacity_planning: "Right-size application memory requests/limits based on 99th percentile usage."
+      documentation: "Runbook: Troubleshooting Application Memory Leaks."
+
+  - rule_id: INC_WEB_502_003
+    title: "Nginx 502 Bad Gateway via Upstream Port Exhaustion"
+    description: "Nginx proxy_pass is failing because the upstream application server (e.g. PHP-FPM, Node) is fully saturated and cannot accept new TCP socket connections."
+    enterprise_requirements:
+      bare_metal: "High connection volume can exhaust local ephemeral ports (TCP TIME_WAIT)."
+      kubernetes: "Ingress Nginx controller will drop traffic if backend Pods hit max concurrency."
+      cloud_vm: "Cloud Load Balancers may sever connections if upstream response time exceeds timeout thresholds."
+    incident_timeline:
+      - evidence_source: "traffic_spike"
+        command: "awk '{print $4}' /var/log/nginx/access.log | cut -d: -f1,2 | uniq -c | tail -10"
+        rationale: "Determine if traffic spiked in the exact minute the 502s began."
+      - evidence_source: "backend_restarts"
+        command: "systemctl status php-fpm | grep 'Active:'"
+        rationale: "Check if the backend crashed and restarted under load."
+    evidence_graph:
+      nodes:
+        - node_id: "node_1"
+          evidence: "Client receives 502 Bad Gateway"
+        - node_id: "node_2"
+          evidence: "Nginx error log: 'connect() failed (111: Connection refused) while connecting to upstream'"
+        - node_id: "node_3"
+          evidence: "Upstream application (PHP-FPM) max_children limit reached"
+        - node_id: "node_4"
+          evidence: "Sudden 500% spike in inbound HTTP traffic"
+      relationships:
+        - source: "node_4"
+          target: "node_3"
+          relation: "causes"
+        - source: "node_3"
+          target: "node_2"
+          relation: "causes"
+        - source: "node_2"
+          target: "node_1"
+          relation: "causes"
+    hypothesis_engine:
+      - hypothesis_id: "hyp_worker_exhaustion"
+        probability: 0.85
+        description: "The backend server has no available workers to accept Nginx's proxied connection."
+        supporting_evidence:
+          - "Nginx logs show connection refused"
+          - "Backend logs show 'server reached pm.max_children setting'"
+        contradictory_evidence:
+          - "Backend CPU is at 0%, meaning workers are hung, not busy."
+      - hypothesis_id: "hyp_backend_crash"
+        probability: 0.15
+        description: "The backend server process completely died."
+        supporting_evidence:
+          - "systemctl status php-fpm shows 'failed'"
+        contradictory_evidence:
+          - "Process is still active but ignoring new sockets."
+    decision_tree:
+      logic: |
+        if (nginx_error_rate('502') > 0):
+          logs = get_nginx_error_log()
+          if ('Connection refused' in logs):
+            backend_status = check_service('php-fpm')
+            if (backend_status == 'active'):
+              if (check_backend_workers_full()):
+                root_cause = 'backend_worker_exhaustion'
+                invoke_action('act_increase_workers')
+              else:
+                root_cause = 'socket_listen_queue_full'
+            else:
+              root_cause = 'backend_crashed'
+              invoke_action('act_restart_backend')
+    action_policy:
+      - action_id: "act_check_nginx_errors"
+        action_type: "collect_evidence"
+        execution_mode: "safe_auto"
+        command: "tail -n 50 /var/log/nginx/error.log | grep upstream"
+      - action_id: "act_restart_backend"
+        action_type: "moderate_remediation"
+        execution_mode: "human_review"
+        command: "systemctl restart php-fpm"
+        rationale: "Restarts the backend to clear hung workers. Will drop active requests."
+      - action_id: "act_increase_workers"
+        action_type: "high_risk_remediation"
+        execution_mode: "dangerous_manual"
+        command: "sed -i 's/pm.max_children = 50/pm.max_children = 200/g' /etc/php/8.1/fpm/pool.d/www.conf && systemctl restart php-fpm"
+        rationale: "Increases concurrency but highly risks OOMing the host if RAM is insufficient."
+    learning_feedback:
+      incident_outcome: "PENDING"
+      confirmed_root_cause: "UNCONFIRMED"
+      fix_successful: false
+      operator_feedback: ""
+    prevention_engine:
+      monitoring: "Monitor Nginx upstream_response_time and HTTP 5xx rates."
+      alerts: "Alert when 5xx errors exceed 1% of total traffic for 2 minutes."
+      hardening: "Configure rate limiting (limit_req) in Nginx to protect the backend from traffic spikes."
+      capacity_planning: "Load test the backend to determine exact RAM usage per worker and strictly limit pm.max_children based on physical RAM."
+      documentation: "Runbook: Mitigating 502 Bad Gateway Outages."

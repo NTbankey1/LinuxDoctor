@@ -270,6 +270,10 @@ rules:
           fact: "container_state"
           operator: "is_not_empty"
           value: ""
+        after_condition:
+          fact: "container_state"
+          operator: "not_contains"
+          value: "0 false"
         root_cause: "Container in crash loop. Exit code: {{container_state.exit_code}}. OOM killed: {{container_state.oom_killed}}."
         recommended_fixes:
           - command: "docker logs $(docker ps -a -q | head -1) --tail 50"
@@ -327,9 +331,9 @@ rules:
     root_cause_analysis:
       - hypothesis_id: "docker_network_conflict"
         condition:
-          fact: "docker_networks"
-          operator: "is_not_empty"
-          value: ""
+          fact: "docker_bridge_status"
+          operator: "equals"
+          value: "0"
         root_cause: "Docker network conflict detected. Available networks: {{docker_networks.net_name}} ({{docker_networks.net_driver}}). Bridge status: {{docker_bridge_status.docker0_up}}."
         recommended_fixes:
           - command: "docker network inspect bridge | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d[0].get('IPAM',''))\" 2>/dev/null"
@@ -338,3 +342,85 @@ rules:
           - command: "docker network prune -f"
             explanation: "Remove unused networks"
             is_safe: false
+
+  - rule_id: DOCKER_008
+    name: "Check Docker Logs"
+    priority: 15
+    trigger_symptoms:
+      - "docker logs"
+      - "xem log docker"
+      - "container logs"
+      - "how to check docker logs"
+    hypotheses:
+      - id: "docker_logs_help"
+        description: "User needs to view docker container logs"
+        confidence: 0.95
+    evidence_gathering:
+      - hypothesis_id: "docker_logs_help"
+        command: "docker ps -q 2>/dev/null | head -1 || echo 'NO_CONTAINERS'"
+        parser_regex: "(?P<first_container>[a-z0-9]+)"
+        fact_key: "first_container"
+    root_cause_analysis:
+      - hypothesis_id: "docker_logs_help"
+        condition:
+          fact: "first_container"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Here are the commands to view Docker logs."
+        recommended_fixes:
+          - command: "docker logs -f {{first_container.first_container}}"
+            explanation: "Follow live logs for the most recent container"
+            is_safe: true
+          - command: "docker ps -a"
+            explanation: "List all containers to find the ID of the one you want to inspect"
+            is_safe: true
+
+  - rule_id: DOCKER_007
+    name: "Docker Not Installed"
+    priority: 15
+    trigger_symptoms:
+      - "docker install"
+      - "how to install docker"
+      - "install docker"
+      - "cài đặt docker"
+      - "command not found: docker"
+      - "docker not installed"
+    hypotheses:
+      - id: "docker_not_installed"
+        description: "Docker is not installed on this system"
+        confidence: 0.90
+      - id: "docker_already_installed"
+        description: "Docker is already installed and available"
+        confidence: 0.90
+    evidence_gathering:
+      - hypothesis_id: "docker_not_installed"
+        command: "command -v docker >/dev/null 2>&1 && echo 'DOCKER_BINARY_EXISTS' || echo 'DOCKER_NOT_INSTALLED'"
+        parser_regex: "(?P<docker_found>DOCKER_BINARY_EXISTS|DOCKER_NOT_INSTALLED)"
+        fact_key: "docker_installed"
+    root_cause_analysis:
+      - hypothesis_id: "docker_not_installed"
+        condition:
+          fact: "docker_installed"
+          operator: "contains"
+          value: "DOCKER_NOT_INSTALLED"
+        root_cause: "Docker is not installed on this system. The docker binary was not found."
+        recommended_fixes:
+          - command: "sudo apt-get install docker.io -y 2>/dev/null || sudo dnf install docker -y 2>/dev/null"
+            explanation: "Install docker using your distribution's package manager"
+            is_safe: false
+          - command: "curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh"
+            explanation: "Install docker using the official installation script"
+            is_safe: false
+      - hypothesis_id: "docker_already_installed"
+        condition:
+          fact: "docker_installed"
+          operator: "contains"
+          value: "DOCKER_BINARY_EXISTS"
+        root_cause: "Docker is already installed on this system."
+        recommended_fixes:
+          - command: "docker --version"
+            explanation: "Check the installed Docker version"
+            is_safe: true
+          - command: "systemctl status docker"
+            explanation: "Check if the Docker daemon is running"
+            is_safe: true
