@@ -1,0 +1,211 @@
+domain: memory
+version: "1.0"
+description: "Memory, OOM, swap, and memory pressure troubleshooting"
+
+rules:
+  - rule_id: MEM_001
+    name: "Out of Memory - OOM Killer"
+    priority: 10
+    trigger_symptoms:
+      - "hết bộ nhớ"
+      - "ram đầy"
+      - "thiếu memory"
+      - "oom"
+      - "out of memory"
+      - "oom-killer"
+      - "killed process"
+      - "exit code 137"
+      - "exit code 9"
+      - "Killed"
+      - "memory failed"
+      - "cannot allocate memory"
+      - "allocation failure"
+      - "process bị kill"
+      - "chương trình die"
+      - "program died"
+      - "process terminated"
+    hypotheses:
+      - id: "oom_killer_triggered"
+        description: "System OOM killer has terminated a process to free memory"
+        confidence: 0.85
+      - id: "swap_exhausted"
+        description: "Swap space is fully consumed"
+        confidence: 0.25
+      - id: "memory_leak"
+        description: "A specific process has a memory leak consuming all available RAM"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "oom_killer_triggered"
+        command: "dmesg -T 2>/dev/null | grep -i oom | tail -10 || journalctl -k --no-pager 2>/dev/null | grep -i oom | tail -10 || echo 'NO_OOM_EVENTS'"
+        parser_regex: "(?P<oom_process>\\w+)\\s+killed.*?(?P<oom_pid>\\d+).*?oom"
+        fact_key: "oom_events"
+      - hypothesis_id: "oom_killer_triggered"
+        command: "free -m"
+        parser_regex: "Mem:\\s+(?P<mem_total>\\d+)\\s+(?P<mem_used>\\d+)\\s+(?P<mem_free>\\d+)\\s+(?P<mem_shared>\\d+)\\s+(?P<mem_buff>\\d+)\\s+(?P<mem_avail>\\d+)"
+        fact_key: "memory_stats"
+      - hypothesis_id: "swap_exhausted"
+        command: "free -m | grep Swap"
+        parser_regex: "Swap:\\s+(?P<swap_total>\\d+)\\s+(?P<swap_used>\\d+)\\s+(?P<swap_free>\\d+)"
+        fact_key: "swap_stats"
+      - hypothesis_id: "memory_leak"
+        command: "ps aux --sort=-%mem 2>/dev/null | head -6"
+        parser_regex: "(?P<user>\\S+)\\s+(?P<pid>\\d+)\\s+(?P<cpu>\\S+)\\s+(?P<mem>\\S+)\\s+(?P<vsz>\\S+)\\s+(?P<rss>\\S+)\\s+(?P<tty>\\S+)\\s+(?P<stat>\\S+)\\s+(?P<start>\\S+)\\s+(?P<time>\\S+)\\s+(?P<process_cmd>.+)"
+        fact_key: "top_memory_processes"
+    root_cause_analysis:
+      - hypothesis_id: "oom_killer_triggered"
+        condition:
+          fact: "oom_events"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "OOM Killer activated. Process {{oom_events.oom_process}} (PID: {{oom_events.oom_pid}}) was killed. Memory available: {{memory_stats.mem_avail}}MB / {{memory_stats.mem_total}}MB total."
+        recommended_fixes:
+          - command: "ps aux --sort=-%mem | head -10"
+            explanation: "List top memory consumers to identify the process causing OOM"
+            is_safe: true
+          - command: "dmesg -T 2>/dev/null | grep -i oom -A 5 | tail -20"
+            explanation: "Show OOM killer details including which memory cgroup and process triggered it"
+            is_safe: true
+          - command: "free -m && echo '---' && swapon --show"
+            explanation: "Check memory and swap summary"
+            is_safe: true
+      - hypothesis_id: "swap_exhausted"
+        condition:
+          fact: "swap_stats"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Swap is exhausted: {{swap_stats.swap_used}}MB used of {{swap_stats.swap_total}}MB total. No swap available for memory pressure relief."
+        recommended_fixes:
+          - command: "fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+            explanation: "Add 2GB swap file to provide additional swap space"
+            is_safe: false
+          - command: "echo '/swapfile none swap sw 0 0' >> /etc/fstab"
+            explanation: "Make swap file persistent across reboots"
+            is_safe: false
+      - hypothesis_id: "memory_leak"
+        condition:
+          fact: "top_memory_processes"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Top memory consumer: {{top_memory_processes.process_cmd}} (PID {{top_memory_processes.pid}}) using {{top_memory_processes.mem}}% memory. Suspected memory leak."
+        recommended_fixes:
+          - command: "watch -n 5 'ps -p {{top_memory_processes.pid}} -o pid,rss,cmd --no-headers'"
+            explanation: "Monitor process memory growth over time to confirm leak"
+            is_safe: true
+          - command: "systemctl restart {{service_name}}"
+            explanation: "Restart {{service_name}} to free memory"
+            is_safe: false
+
+  - rule_id: MEM_002
+    name: "High Memory Pressure"
+    priority: 8
+    trigger_symptoms:
+      - "hết bộ nhớ"
+      - "ram đầy"
+      - "thiếu memory"
+      - "oom"
+      - "high memory usage"
+      - "memory pressure"
+      - "running out of memory"
+      - "low memory"
+      - "slow"
+      - "memory usage"
+      - "memory high"
+      - "tràn bộ nhớ"
+      - "not enough memory"
+    hypotheses:
+      - id: "physical_memory_exhausted"
+        description: "Physical RAM is near full capacity"
+        confidence: 0.70
+      - id: "excessive_cache"
+        description: "Page cache consuming excessive memory"
+        confidence: 0.15
+    evidence_gathering:
+      - hypothesis_id: "physical_memory_exhausted"
+        command: "free -m"
+        parser_regex: "Mem:\\s+(?P<mem_total>\\d+)\\s+(?P<mem_used>\\d+)\\s+(?P<mem_free>\\d+)\\s+(?P<mem_shared>\\d+)\\s+(?P<mem_buff>\\d+)\\s+(?P<mem_avail>\\d+)"
+        fact_key: "free_memory"
+      - hypothesis_id: "physical_memory_exhausted"
+        command: "ps aux --sort=-%mem 2>/dev/null | head -4"
+        parser_regex: "(?P<top_proc>\\S.*)"
+        fact_key: "top_mem_procs"
+      - hypothesis_id: "excessive_cache"
+        command: "cat /proc/meminfo | grep -E '^(Cached|Buffers):'"
+        parser_regex: "(?P<cache_name>\\w+):\\s+(?P<cache_kb>\\d+)"
+        fact_key: "cache_stats"
+    root_cause_analysis:
+      - hypothesis_id: "physical_memory_exhausted"
+        condition:
+          fact: "free_memory"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Physical memory critical: {{free_memory.mem_avail}}MB available out of {{free_memory.mem_total}}MB total. Available memory below 10% threshold."
+        recommended_fixes:
+          - command: "ps aux --sort=-%mem | head -10"
+            explanation: "Show top 10 memory-consuming processes"
+            is_safe: true
+          - command: "sudo systemctl restart $(ps aux --sort=-%mem | head -2 | tail -1 | awk '{print $NF}') || echo 'Cannot restart - evaluate manually'"
+            explanation: "Restart the top memory consumer (if service)"
+            is_safe: false
+      - hypothesis_id: "excessive_cache"
+        condition:
+          fact: "cache_stats"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Page cache is using {{cache_stats.cache_kb}}kB which may be excessive. Consider dropping caches if memory pressure is urgent."
+        recommended_fixes:
+          - command: "echo 3 > /proc/sys/vm/drop_caches && echo 'done' || echo 'failed'"
+            explanation: "Drop page cache, dentries, and inodes to free memory"
+            is_safe: false
+          - command: "sysctl -w vm.vfs_cache_pressure=200"
+            explanation: "Increase cache reclaim pressure to free cached memory faster"
+            is_safe: false
+
+  - rule_id: MEM_003
+    name: "Page Allocation Failure"
+    priority: 7
+    trigger_symptoms:
+      - "hết bộ nhớ"
+      - "ram đầy"
+      - "thiếu memory"
+      - "oom"
+      - "page allocation failure"
+      - "allocation failure"
+      - "order"
+      - "atomic allocation"
+      - "cannot allocate"
+      - "kernel memory"
+      - "memory error"
+    hypotheses:
+      - id: "memory_fragmentation"
+        description: "Memory fragmentation prevents large contiguous allocations"
+        confidence: 0.55
+      - id: "zone_low_on_memory"
+        description: "Specific memory zone (DMA/Normal) is exhausted"
+        confidence: 0.40
+    evidence_gathering:
+      - hypothesis_id: "memory_fragmentation"
+        command: "cat /proc/buddyinfo 2>/dev/null | head -5 || echo 'NO_BUDDYINFO'"
+        parser_regex: "Normal\\s+(?P<buddy_orders>[\\d\\s]+)"
+        fact_key: "buddy_info"
+      - hypothesis_id: "zone_low_on_memory"
+        command: "cat /proc/zoneinfo 2>/dev/null | grep -E '^Node|pages free|min|low|high' | head -20 || echo 'NO_ZONEINFO'"
+        parser_regex: "Node\\s+(?P<node_id>\\d+).*"
+        fact_key: "zone_stats"
+      - hypothesis_id: "memory_fragmentation"
+        command: "vmstat 1 3 | tail -1 | awk '{print \"si=\"$7\" so=\"$8}'"
+        parser_regex: "si=(?P<swap_in>\\d+)\\s+so=(?P<swap_out>\\d+)"
+        fact_key: "swap_activity"
+    root_cause_analysis:
+      - hypothesis_id: "memory_fragmentation"
+        condition:
+          fact: "swap_activity"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Memory fragmentation detected. Heavy swap activity (si={{swap_activity.swap_in}}, so={{swap_activity.swap_out}}) indicates memory pressure."
+        recommended_fixes:
+          - command: "echo 1 > /proc/sys/vm/compact_memory || sysctl -w vm.compact_memory=1"
+            explanation: "Trigger memory compaction to reduce fragmentation"
+            is_safe: false
+          - command: "sysctl -w vm.min_free_kbytes=$(awk '/MemTotal/ {printf \"%d\", $2*0.005}' /proc/meminfo)"
+            explanation: "Increase min_free_kbytes to reserve memory for atomic allocations"
+            is_safe: false

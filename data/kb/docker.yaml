@@ -1,0 +1,327 @@
+domain: docker
+version: "2.0"
+description: "Knowledge base for Docker engine, container and image troubleshooting"
+
+rules:
+  - rule_id: DOCKER_001
+    name: "Permission Denied on Docker Socket"
+    priority: 10
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "permission denied"
+      - "docker.sock"
+      - "cannot connect to docker daemon"
+      - "dial unix /var/run/docker.sock"
+      - "got permission denied"
+    hypotheses:
+      - id: "user_not_in_docker_group"
+        description: "Current user is not in the 'docker' group"
+        confidence: 0.85
+      - id: "docker_socket_wrong_perms"
+        description: "Docker socket file has incorrect permissions"
+        confidence: 0.15
+    evidence_gathering:
+      - hypothesis_id: "user_not_in_docker_group"
+        command: "groups"
+        parser_regex: "(?P<groups>.+)"
+        fact_key: "user_groups"
+      - hypothesis_id: "docker_socket_wrong_perms"
+        command: "ls -l /var/run/docker.sock 2>/dev/null || ls -l /run/docker.sock 2>/dev/null || echo 'SOCKET_NOT_FOUND'"
+        parser_regex: "(?P<socket_perms>[srwx-]+)\\s+\\d+\\s+(?P<socket_owner>\\S+)\\s+(?P<socket_group>\\S+)"
+        fact_key: "socket_info"
+    root_cause_analysis:
+      - hypothesis_id: "user_not_in_docker_group"
+        condition:
+          fact: "user_groups"
+          operator: "not_contains"
+          value: "docker"
+        root_cause: "User is not in the 'docker' group. Docker socket access is restricted to members of this group."
+        recommended_fixes:
+          - command: "sudo usermod -aG docker $USER"
+            explanation: "Add current user to docker group"
+            is_safe: false
+          - command: "newgrp docker"
+            explanation: "Apply the new group without logging out"
+            is_safe: true
+      - hypothesis_id: "docker_socket_wrong_perms"
+        condition:
+          fact: "socket_info"
+          operator: "is_empty"
+          value: ""
+        root_cause: "Docker socket at /var/run/docker.sock is missing or has wrong permissions."
+        recommended_fixes:
+          - command: "sudo systemctl restart docker"
+            explanation: "Restart Docker daemon to recreate the socket file"
+            is_safe: false
+
+  - rule_id: DOCKER_002
+    name: "Docker Daemon Not Running"
+    priority: 10
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "cannot connect to docker daemon"
+      - "is the docker daemon running"
+      - "docker daemon not started"
+      - "docker: connect"
+      - "connection refused"
+    hypotheses:
+      - id: "docker_service_stopped"
+        description: "The docker.service systemd unit is stopped"
+        confidence: 0.90
+    evidence_gathering:
+      - hypothesis_id: "docker_service_stopped"
+        command: "systemctl is-active docker 2>/dev/null || echo 'SYSTEMCTL_FAILED'"
+        parser_regex: "(?P<daemon_status>active|inactive|failed|unknown)"
+        fact_key: "docker_daemon_status"
+      - hypothesis_id: "docker_service_stopped"
+        command: "systemctl status docker 2>/dev/null | head -5"
+        parser_regex: "Active:\\s+(?P<active_status>\\w+(?:\\([^)]+\\))?)"
+        fact_key: "docker_service_status"
+    root_cause_analysis:
+      - hypothesis_id: "docker_service_stopped"
+        condition:
+          fact: "docker_daemon_status"
+          operator: "not_equals"
+          value: "active"
+        root_cause: "Docker daemon (docker.service) is not running. Status: {{docker_daemon_status.daemon_status}}."
+        recommended_fixes:
+          - command: "sudo systemctl start docker"
+            explanation: "Start the Docker daemon"
+            is_safe: false
+          - command: "sudo systemctl enable --now docker"
+            explanation: "Enable Docker to start automatically on boot"
+            is_safe: false
+          - command: "journalctl -xu docker -n 30 --no-pager"
+            explanation: "Check Docker daemon logs for startup failure reason"
+            is_safe: true
+
+  - rule_id: DOCKER_003
+    name: "Docker Disk Space Exhausted"
+    priority: 9
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "no space left on device"
+      - "write /var/lib/docker"
+      - "overlay2 write"
+      - "docker build failed"
+      - "insufficient space"
+      - "docker disk"
+    hypotheses:
+      - id: "docker_disk_full"
+        description: "Docker storage disk usage exceeds threshold"
+        confidence: 0.80
+      - id: "dangling_images"
+        description: "Excessive dangling images and stopped containers"
+        confidence: 0.60
+    evidence_gathering:
+      - hypothesis_id: "docker_disk_full"
+        command: "df -h /var/lib/docker 2>/dev/null || df -h / 2>/dev/null"
+        parser_regex: "(?P<disk_use_pct>\\d+)%\\s+(?P<disk_mount>\\S+)$"
+        fact_key: "docker_disk_use_percent"
+      - hypothesis_id: "dangling_images"
+        command: "docker system df 2>/dev/null || echo 'DOCKER_COMMAND_FAILED'"
+        parser_regex: "Images:\\s+(?P<image_count>\\d+).*Containers:\\s+(?P<container_count>\\d+).*Local Volumes:\\s+(?P<volume_count>\\d+).*Build Cache:\\s+(?P<build_cache>\\S+)"
+        fact_key: "docker_storage_summary"
+      - hypothesis_id: "dangling_images"
+        command: "docker images --filter dangling=true -q 2>/dev/null | wc -l || echo '0'"
+        parser_regex: "(?P<dangling_count>\\d+)"
+        fact_key: "dangling_image_count"
+    root_cause_analysis:
+      - hypothesis_id: "docker_disk_full"
+        condition:
+          fact: "docker_disk_use_percent"
+          operator: "greater_than"
+          value: "90"
+        root_cause: "Docker storage disk ({{docker_disk_use_percent.disk_mount}}) is {{docker_disk_use_percent.disk_use_pct}}% full. Critical threshold exceeded."
+        recommended_fixes:
+          - command: "docker system prune -f"
+            explanation: "Remove stopped containers, unused networks, and dangling images"
+            is_safe: false
+          - command: "docker image prune -a -f"
+            explanation: "Remove all unused images (not just dangling)"
+            is_safe: false
+          - command: "docker volume prune -f"
+            explanation: "Remove unused local volumes"
+            is_safe: false
+      - hypothesis_id: "dangling_images"
+        condition:
+          fact: "dangling_image_count"
+          operator: "greater_than"
+          value: "10"
+        root_cause: "{{dangling_image_count.dangling_count}} dangling images found consuming disk space. Requires cleanup."
+        recommended_fixes:
+          - command: "docker image prune -f"
+            explanation: "Remove dangling (untagged) images"
+            is_safe: false
+          - command: "docker system df -v | head -30"
+            explanation: "Show detailed Docker disk usage by layer"
+            is_safe: true
+
+  - rule_id: DOCKER_004
+    name: "Docker Daemon Crashed or Socket Missing"
+    priority: 9
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "cannot connect"
+      - "docker daemon"
+      - "daemon crash"
+      - "docker.sock"
+      - "is the docker daemon running"
+      - "connect to unix"
+    hypotheses:
+      - id: "docker_daemon_crashed"
+        description: "Docker daemon has crashed or socket is missing"
+        confidence: 0.70
+      - id: "docker_init_failed"
+        description: "Docker daemon initialization failed due to configuration error"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "docker_daemon_crashed"
+        command: "journalctl -u docker -n 20 --no-pager 2>/dev/null | tail -20"
+        parser_regex: "(?P<daemon_log>.*(?:error|fatal|panic|failed|crashed).*)"
+        fact_key: "docker_daemon_logs"
+      - hypothesis_id: "docker_daemon_crashed"
+        command: "ls -la /var/run/docker.sock /run/docker.sock 2>&1 || echo 'SOCKET_MISSING'"
+        parser_regex: "(?P<socket_path>/var/run/docker\\.sock|/run/docker\\.sock|SOCKET_MISSING)"
+        fact_key: "docker_socket_exists"
+      - hypothesis_id: "docker_init_failed"
+        command: "cat /etc/docker/daemon.json 2>/dev/null || echo 'NO_DAEMON_CONFIG'"
+        parser_regex: "(?P<daemon_config>.*)"
+        fact_key: "docker_daemon_config"
+    root_cause_analysis:
+      - hypothesis_id: "docker_daemon_crashed"
+        condition:
+          fact: "docker_daemon_logs"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Docker daemon has errors: {{docker_daemon_logs.daemon_log}}. Socket {{docker_socket_exists.socket_path}}."
+        recommended_fixes:
+          - command: "sudo journalctl -xu docker --no-pager | tail -50"
+            explanation: "Full Docker daemon logs for detailed failure analysis"
+            is_safe: true
+          - command: "sudo dockerd --debug 2>&1 | head -30"
+            explanation: "Start Docker daemon in debug mode to see initialization errors"
+            is_safe: false
+
+  - rule_id: DOCKER_005
+    name: "Container Exit Loop / CrashLoopBackOff"
+    priority: 8
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "container exited"
+      - "exited immediately"
+      - "crash loop"
+      - "restarting"
+      - "exited(1)"
+      - "container restart"
+      - "CrashLoopBackOff"
+      - "container keeps dying"
+    hypotheses:
+      - id: "container_crash_loop"
+        description: "Container exits immediately due to application error"
+        confidence: 0.65
+      - id: "container_oom_killed"
+        description: "Container killed by OOM limit"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "container_crash_loop"
+        command: 'c=$(docker ps -a --format "{{.Names}}" 2>/dev/null | head -1); if [ -n "$c" ]; then docker inspect "$c" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); s=d[0][\"State\"]; print(f\"status={s[\"Status\"]} exit={s[\"ExitCode\"]} oom={s[\"OOMKilled\"]}\")"; else echo "NO_CONTAINERS"; fi'
+        parser_regex: "exit=(?P<exit_code>\\d+)\\s+oom=(?P<oom_killed>True|False)"
+        fact_key: "container_state"
+      - hypothesis_id: "container_crash_loop"
+        command: 'c=$(docker ps -a --format "{{.Names}}" 2>/dev/null | head -1); if [ -n "$c" ]; then docker logs "$c" --tail 20 2>&1; else echo "NO_CONTAINERS"; fi'
+        parser_regex: "(?P<container_log>.*(?:Error|error|FATAL|panic|Exception|Traceback).*)"
+        fact_key: "container_logs"
+      - hypothesis_id: "container_oom_killed"
+        command: "docker inspect $(docker ps -a -q 2>/dev/null | head -1) 2>/dev/null | python3 -c \"import sys,json; d=json.load(sys.stdin); h=d[0]['HostConfig']; print(f'mem_limit={h.get(\"Memory\",0)} mem_res={h.get(\"MemoryReservation\",0)} swap={h.get(\"MemorySwap\",0)}')\" 2>/dev/null || echo 'INSPECT_FAILED'"
+        parser_regex: "mem_limit=(?P<mem_limit>\\d+)"
+        fact_key: "container_mem_config"
+    root_cause_analysis:
+      - hypothesis_id: "container_crash_loop"
+        condition:
+          fact: "container_state"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Container in crash loop. Exit code: {{container_state.exit_code}}. OOM killed: {{container_state.oom_killed}}."
+        recommended_fixes:
+          - command: "docker logs $(docker ps -a -q | head -1) --tail 50"
+            explanation: "Show last 50 lines of container logs to identify the crash reason"
+            is_safe: true
+          - command: "docker run --rm -it $(docker images -q | head -1) sh -c 'echo testing entrypoint'"
+            explanation: "Test if the container image entrypoint works in isolation"
+            is_safe: true
+      - hypothesis_id: "container_oom_killed"
+        condition:
+          fact: "container_state"
+          operator: "contains"
+          value: "oom=True"
+        root_cause: "Container was killed by OOM (memory limit: {{container_mem_config.mem_limit}} bytes). Application requires more memory."
+        recommended_fixes:
+          - command: "docker run -m 512m --memory-reservation 256m $(docker images -q | head -1)"
+            explanation: "Run container with increased memory limit (512MB)"
+            is_safe: false
+          - command: "docker stats --no-stream"
+            explanation: "Monitor container resource usage to determine actual memory needs"
+            is_safe: true
+
+  - rule_id: DOCKER_006
+    name: "Docker Network Conflict"
+    priority: 7
+    trigger_symptoms:
+      - "docker không chạy"
+      - "docker lỗi"
+      - "container lỗi"
+      - "không vào được docker"
+      - "docker network"
+      - "network not found"
+      - "overlay network"
+      - "bridge network"
+      - "docker port"
+      - "port already allocated"
+      - "already in use"
+    hypotheses:
+      - id: "docker_network_conflict"
+        description: "Docker network or port allocation conflict"
+        confidence: 0.55
+    evidence_gathering:
+      - hypothesis_id: "docker_network_conflict"
+        command: "docker network ls 2>/dev/null || echo 'NETWORK_LS_FAILED'"
+        parser_regex: "(?P<net_id>\\w+)\\s+(?P<net_name>\\w+)\\s+(?P<net_driver>\\w+)"
+        fact_key: "docker_networks"
+      - hypothesis_id: "docker_network_conflict"
+        command: "docker port $(docker ps -a -q 2>/dev/null | head -1) 2>/dev/null || echo 'NO_PORT_MAP'"
+        parser_regex: "(?P<port_map>\\S+\\s+->\\s+\\S+)"
+        fact_key: "docker_port_map"
+      - hypothesis_id: "docker_network_conflict"
+        command: "ip link show docker0 2>/dev/null | grep -c UP || echo '0'"
+        parser_regex: "(?P<docker0_up>\\d+)"
+        fact_key: "docker_bridge_status"
+    root_cause_analysis:
+      - hypothesis_id: "docker_network_conflict"
+        condition:
+          fact: "docker_networks"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Docker network conflict detected. Available networks: {{docker_networks.net_name}} ({{docker_networks.net_driver}}). Bridge status: {{docker_bridge_status.docker0_up}}."
+        recommended_fixes:
+          - command: "docker network inspect bridge | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d[0].get('IPAM',''))\" 2>/dev/null"
+            explanation: "Show bridge network subnet to check for conflicts"
+            is_safe: true
+          - command: "docker network prune -f"
+            explanation: "Remove unused networks"
+            is_safe: false

@@ -1,0 +1,367 @@
+domain: nginx
+version: "2.0"
+description: "Knowledge base for Nginx web server troubleshooting"
+
+rules:
+  - rule_id: NGINX_001
+    name: "Nginx Port Already in Use"
+    priority: 10
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "address already in use"
+      - "bind() to 0.0.0.0:80 failed"
+      - "bind() to 0.0.0.0:443 failed"
+      - "failed to start nginx"
+      - "nginx won't start"
+      - "cannot start nginx"
+      - "nginx failed"
+    hypotheses:
+      - id: "port_conflict_80"
+        description: "Another process is using port 80"
+        confidence: 0.80
+      - id: "port_conflict_443"
+        description: "Another process is using port 443"
+        confidence: 0.50
+    evidence_gathering:
+      - hypothesis_id: "port_conflict_80"
+        command: "ss -tulpn 2>/dev/null | grep ':80 ' || netstat -tulpn 2>/dev/null | grep ':80 ' || echo 'NO_PORTS'"
+        parser_regex: "users:\\(\\(\"(?P<port_process>[^\"]+)\""
+        fact_key: "port_80_owner"
+      - hypothesis_id: "port_conflict_443"
+        command: "ss -tulpn 2>/dev/null | grep ':443 ' || netstat -tulpn 2>/dev/null | grep ':443 ' || echo 'NO_PORTS'"
+        parser_regex: "users:\\(\\(\"(?P<port_process>[^\"]+)\""
+        fact_key: "port_443_owner"
+      - hypothesis_id: "port_conflict_80"
+        command: "systemctl status nginx 2>&1 | head -10"
+        parser_regex: "Active:\\s+(?P<service_status>\\w+(?:\\([^)]+\\))?)"
+        fact_key: "nginx_service_status"
+    root_cause_analysis:
+      - hypothesis_id: "port_conflict_80"
+        condition:
+          fact: "port_80_owner"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Port 80 is occupied by: {{port_80_owner}}. Nginx cannot bind to this port."
+        recommended_fixes:
+          - command: "sudo systemctl stop {{port_80_owner.port_process}}"
+            explanation: "Stop the process occupying port 80"
+            is_safe: false
+          - command: "sudo fuser -k 80/tcp"
+            explanation: "Kill whatever process is holding port 80"
+            is_safe: false
+          - command: "sudo systemctl start nginx"
+            explanation: "Start Nginx after freeing port 80"
+            is_safe: false
+      - hypothesis_id: "port_conflict_443"
+        condition:
+          fact: "port_443_owner"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Port 443 is occupied by: {{port_443_owner}}. Nginx SSL bind failed."
+        recommended_fixes:
+          - command: "sudo systemctl stop {{port_443_owner}}"
+            explanation: "Stop the process occupying port 443"
+            is_safe: false
+          - command: "sudo fuser -k 443/tcp"
+            explanation: "Kill whatever process is holding port 443"
+            is_safe: false
+
+  - rule_id: NGINX_002
+    name: "Nginx Config Syntax Error"
+    priority: 10
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "test failed"
+      - "nginx -t"
+      - "unknown directive"
+      - "no such file or directory"
+      - "invalid parameter"
+      - "configuration file"
+      - "nginx.conf"
+      - "syntax error"
+      - "emerg directive"
+    hypotheses:
+      - id: "config_syntax_error"
+        description: "Nginx configuration file has a syntax error"
+        confidence: 0.95
+    evidence_gathering:
+      - hypothesis_id: "config_syntax_error"
+        command: "nginx -t 2>&1"
+        parser_regex: "(?P<config_result>syntax is ok|test failed|emerg|\\[emerg\\].*)"
+        fact_key: "nginx_config_test"
+      - hypothesis_id: "config_syntax_error"
+        command: "nginx -t 2>&1 | head -3"
+        parser_regex: "(?P<config_error>\\[emerg\\].*\\((?!.*ok))"
+        fact_key: "config_error_detail"
+    root_cause_analysis:
+      - hypothesis_id: "config_syntax_error"
+        condition:
+          fact: "nginx_config_test"
+          operator: "contains"
+          value: "emerg"
+        root_cause: "Nginx configuration test failed: {{config_error_detail.config_error}}. There is a syntax error in your config files."
+        recommended_fixes:
+          - command: "nginx -t 2>&1"
+            explanation: "Run config test again to see the exact error line and file"
+            is_safe: true
+          - command: "grep -n 'error|fail|syntax' /var/log/nginx/error.log | tail -10"
+            explanation: "Check Nginx error log for syntax error context"
+            is_safe: true
+          - command: "sudo nginx -s reload"
+            explanation: "Reload Nginx after fixing config (run 'nginx -t' first to verify)"
+            is_safe: false
+
+  - rule_id: NGINX_003
+    name: "Nginx Permission Denied on Files"
+    priority: 8
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "permission denied"
+      - "13: Permission denied"
+      - "cannot access"
+      - "access forbidden"
+      - "forbidden"
+      - "403"
+    hypotheses:
+      - id: "nginx_file_permission"
+        description: "Nginx cannot access web files due to permission issues"
+        confidence: 0.70
+      - id: "nginx_selinux_blocking"
+        description: "SELinux context blocking Nginx file access"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "nginx_file_permission"
+        command: "stat -c '%U %G %a' /var/www/ 2>/dev/null || stat -c '%U %G %a' /usr/share/nginx/html/ 2>/dev/null || echo 'NO_WEBROOT'"
+        parser_regex: "(?P<webroot_owner>\\S+)\\s+(?P<webroot_group>\\S+)\\s+(?P<webroot_mode>\\d+)"
+        fact_key: "webroot_perms"
+      - hypothesis_id: "nginx_file_permission"
+        command: "grep -E '^user\\s+' /etc/nginx/nginx.conf 2>/dev/null || echo 'user nginx;'"
+        parser_regex: "user\\s+(?P<nginx_user>\\S+)"
+        fact_key: "nginx_user"
+      - hypothesis_id: "nginx_selinux_blocking"
+        command: "getenforce 2>/dev/null || echo 'DISABLED'"
+        parser_regex: "(?P<selinux>Enforcing|Permissive|Disabled)"
+        fact_key: "nginx_selinux_mode"
+    root_cause_analysis:
+      - hypothesis_id: "nginx_file_permission"
+        condition:
+          fact: "webroot_perms"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Webroot owned by {{webroot_perms.webroot_owner}}:{{webroot_perms.webroot_group}} (mode {{webroot_perms.webroot_mode}}) but Nginx runs as user {{nginx_user.nginx_user}}."
+        recommended_fixes:
+          - command: "sudo chown -R {{nginx_user.nginx_user}}:{{nginx_user.nginx_user}} /var/www/"
+            explanation: "Set webroot ownership to the Nginx user"
+            is_safe: false
+          - command: "sudo find /var/www/ -type d -exec chmod 755 {} \\; && sudo find /var/www/ -type f -exec chmod 644 {} \\;"
+            explanation: "Set standard web directory and file permissions"
+            is_safe: false
+      - hypothesis_id: "nginx_selinux_blocking"
+        condition:
+          fact: "nginx_selinux_mode"
+          operator: "contains"
+          value: "Enforcing"
+        root_cause: "SELinux is Enforcing. Nginx may need the httpd_sys_content_t context on web files."
+        recommended_fixes:
+          - command: "sudo restorecon -Rv /var/www/"
+            explanation: "Restore default SELinux contexts for web content"
+            is_safe: false
+          - command: "sudo semanage fcontext -a -t httpd_sys_content_t '/var/www(/.*)?' && sudo restorecon -Rv /var/www/"
+            explanation: "Set SELinux file type for web content and apply recursively"
+            is_safe: false
+          - command: "sudo setsebool -P httpd_can_network_connect 1"
+            explanation: "Allow Nginx to make network connections (proxying)"
+            is_safe: false
+
+  - rule_id: NGINX_004
+    name: "Nginx Upstream / Bad Gateway"
+    priority: 8
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "upstream"
+      - "bad gateway"
+      - "502"
+      - "504"
+      - "connection refused"
+      - "no live upstreams"
+      - "upstream timeout"
+    hypotheses:
+      - id: "nginx_upstream_down"
+        description: "Upstream backend server is unreachable"
+        confidence: 0.75
+      - id: "nginx_upstream_timeout"
+        description: "Upstream backend is too slow and timing out"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "nginx_upstream_down"
+        command: "grep -h 'proxy_pass\\|uwsgi_pass\\|fastcgi_pass' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -5 || echo 'NO_UPSTREAM_CONFIG'"
+        parser_regex: "(?P<upstream_url>\\w+://\\S+)"
+        fact_key: "upstream_config"
+      - hypothesis_id: "nginx_upstream_down"
+        command: "journalctl -u nginx -n 10 --no-pager 2>/dev/null | grep -E 'connect.*failed|upstream.*timeout|no live' | head -5 || echo 'NO_NGINX_LOG'"
+        parser_regex: "(?P<upstream_error>.*(?:connect.*failed|upstream.*timeout|no live).*)"
+        fact_key: "upstream_errors"
+      - hypothesis_id: "nginx_upstream_timeout"
+        command: "grep -h 'proxy_read_timeout\\|proxy_connect_timeout' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -3 || echo 'NO_TIMEOUT_CONFIG'"
+        parser_regex: "proxy_(?:read|connect)_timeout\\s+(?P<timeout_sec>\\d+)"
+        fact_key: "proxy_timeout_config"
+    root_cause_analysis:
+      - hypothesis_id: "nginx_upstream_down"
+        condition:
+          fact: "upstream_errors"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Nginx upstream failed: {{upstream_errors.upstream_error}}. Upstream configured as {{upstream_config.upstream_url}}."
+        recommended_fixes:
+          - command: "curl -sI -m 5 {{upstream_config.upstream_url}} 2>&1 | head -5"
+            explanation: "Test upstream connectivity directly to see if the backend is reachable"
+            is_safe: true
+          - command: "systemctl status <upstream_service> 2>/dev/null || echo 'Check upstream service status manually'"
+            explanation: "Check if the upstream backend service is running"
+            is_safe: true
+      - hypothesis_id: "nginx_upstream_timeout"
+        condition:
+          fact: "proxy_timeout_config"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Nginx proxy timeout: {{proxy_timeout_config.timeout_sec}}s. The upstream backend exceeds this timeout setting."
+        recommended_fixes:
+          - command: "sudo sed -i '/proxy_read_timeout/s/[0-9]\\+/120/' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null || echo 'Update proxy_read_timeout to 120s in nginx config'"
+            explanation: "Increase proxy read timeout to 120 seconds"
+            is_safe: false
+          - command: "sudo sed -i '/proxy_connect_timeout/s/[0-9]\\+/30/' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null || echo 'Update proxy_connect_timeout to 30s'"
+            explanation: "Increase proxy connect timeout to 30 seconds"
+            is_safe: false
+          - command: "sudo nginx -s reload"
+            explanation: "Reload Nginx to apply timeout config changes"
+            is_safe: false
+
+  - rule_id: NGINX_005
+    name: "Nginx SSL Certificate Issues"
+    priority: 7
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "ssl"
+      - "certificate"
+      - "cert"
+      - "ssl error"
+      - "handshake failed"
+      - "no ssl certificate"
+      - "cannot load certificate"
+    hypotheses:
+      - id: "nginx_ssl_expired"
+        description: "SSL certificate has expired"
+        confidence: 0.60
+      - id: "nginx_ssl_permission"
+        description: "Nginx cannot read SSL certificate files"
+        confidence: 0.25
+    evidence_gathering:
+      - hypothesis_id: "nginx_ssl_expired"
+        command: "grep -h 'ssl_certificate\\s' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 | awk '{print $2}' | sed 's/;//' | xargs -I{} openssl x509 -in {} -noout -dates 2>/dev/null || echo 'CERT_READ_FAIL'"
+        parser_regex: "notBefore=(?P<not_before>\\S+)\\s+notAfter=(?P<not_after>\\S+)"
+        fact_key: "cert_dates"
+      - hypothesis_id: "nginx_ssl_permission"
+        command: "grep -h 'ssl_certificate_key\\s' /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null | head -1 | awk '{print $2}' | sed 's/;//' | xargs -I{} ls -la {} 2>&1 || echo 'KEY_READ_FAIL'"
+        parser_regex: "(?P<key_perms>[rwx-]{10})\\s+\\d+\\s+(?P<key_owner>\\S+)\\s+(?P<key_group>\\S+)"
+        fact_key: "ssl_key_perms"
+    root_cause_analysis:
+      - hypothesis_id: "nginx_ssl_expired"
+        condition:
+          fact: "cert_dates"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SSL certificate valid from {{cert_dates.not_before}} to {{cert_dates.not_after}}. Certificate may be expired or not yet valid."
+        recommended_fixes:
+          - command: "openssl x509 -in /path/to/cert.pem -noout -subject -issuer -dates"
+            explanation: "Show certificate details: subject, issuer, validity dates"
+            is_safe: true
+          - command: "sudo certbot renew --nginx"
+            explanation: "Renew Let's Encrypt certificates with Nginx plugin"
+            is_safe: false
+      - hypothesis_id: "nginx_ssl_permission"
+        condition:
+          fact: "ssl_key_perms"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SSL private key has permissions {{ssl_key_perms.key_perms}} (owner {{ssl_key_perms.key_owner}}). Nginx needs read access."
+        recommended_fixes:
+          - command: "sudo chmod 640 /etc/ssl/private/*.key"
+            explanation: "Set correct permissions for SSL private keys"
+            is_safe: false
+          - command: "sudo chown root:{{nginx_user.nginx_user}} /etc/ssl/private/*.key"
+            explanation: "Allow Nginx group to read SSL keys"
+            is_safe: false
+
+  - rule_id: NGINX_006
+    name: "Nginx Not Installed"
+    priority: 10
+    trigger_symptoms:
+      - "nginx không chạy"
+      - "nginx lỗi"
+      - "nginx không khởi động"
+      - "web server không hoạt động"
+      - "nginx failed to start"
+      - "nginx not found"
+      - "nginx not installed"
+      - "nginx command not found"
+      - "nginx not running"
+      - "cannot find nginx"
+    hypotheses:
+      - id: "nginx_not_installed"
+        description: "Nginx is not installed on this system"
+        confidence: 0.90
+      - id: "nginx_binary_missing"
+        description: "Nginx binary is missing or corrupted"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "nginx_not_installed"
+        command: "command -v nginx >/dev/null 2>&1 && echo 'NGINX_BINARY_EXISTS' || echo 'NGINX_NOT_INSTALLED'"
+        parser_regex: "(?P<nginx_found>NGINX_BINARY_EXISTS|NGINX_NOT_INSTALLED)"
+        fact_key: "nginx_installed"
+      - hypothesis_id: "nginx_not_installed"
+        command: "rpm -q nginx 2>/dev/null && echo 'NGINX_PKG_INSTALLED' || dpkg -l nginx 2>/dev/null | grep -q '^ii' && echo 'NGINX_PKG_INSTALLED' || echo 'NGINX_PKG_MISSING'"
+        parser_regex: "(?P<nginx_pkg>NGINX_PKG_INSTALLED|NGINX_PKG_MISSING)"
+        fact_key: "nginx_package_status"
+      - hypothesis_id: "nginx_not_installed"
+        command: "systemctl list-unit-files nginx.service 2>/dev/null | grep -q nginx && echo 'NGINX_UNIT_EXISTS' || echo 'NO_NGINX_UNIT'"
+        parser_regex: "(?P<nginx_unit>NGINX_UNIT_EXISTS|NO_NGINX_UNIT)"
+        fact_key: "nginx_unit_file"
+    root_cause_analysis:
+      - hypothesis_id: "nginx_not_installed"
+        condition:
+          fact: "nginx_installed"
+          operator: "contains"
+          value: "NGINX_NOT_INSTALLED"
+        root_cause: "Nginx is not installed on this system. The nginx binary was not found and no nginx package is installed."
+        recommended_fixes:
+          - command: "sudo apt-get install nginx -y 2>/dev/null || sudo dnf install nginx -y 2>/dev/null || sudo yum install nginx -y 2>/dev/null"
+            explanation: "Install nginx using your distribution's package manager"
+            is_safe: false
+          - command: "systemctl status nginx 2>/dev/null && echo 'nginx already running' || echo 'Install nginx first'"
+            explanation: "Verify nginx is installed and running"
+            is_safe: true
+      - hypothesis_id: "nginx_binary_missing"
+        condition:
+          fact: "nginx_installed"
+          operator: "contains"
+          value: "found"
+        root_cause: "Nginx binary exists but may be corrupted or incompatible."
+        recommended_fixes:
+          - command: "sudo apt-get reinstall nginx -y 2>/dev/null || sudo dnf reinstall nginx -y 2>/dev/null"
+            explanation: "Reinstall nginx to repair corrupted binary"
+            is_safe: false

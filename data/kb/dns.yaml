@@ -1,0 +1,136 @@
+domain: dns
+version: "1.0"
+description: "DNS resolution, nameserver, and resolver troubleshooting"
+
+rules:
+  - rule_id: DNS_001
+    name: "DNS Resolution Failure"
+    priority: 10
+    trigger_symptoms:
+      - "dns lỗi"
+      - "không phân giải được domain"
+      - "không vào được web"
+      - "name or service not known"
+      - "could not resolve"
+      - "nxdomain"
+      - "dns resolution"
+      - "cannot resolve"
+      - "resolve"
+      - "unknown host"
+      - "temporary failure in name resolution"
+      - "dns server"
+    hypotheses:
+      - id: "bad_nameserver_config"
+        description: "/etc/resolv.conf contains invalid or unreachable nameservers"
+        confidence: 0.40
+      - id: "resolver_service_down"
+        description: "systemd-resolved or dnsmasq service is not running"
+        confidence: 0.30
+      - id: "dns_network_blocked"
+        description: "DNS (UDP/53) traffic is blocked by firewall"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "bad_nameserver_config"
+        command: "cat /etc/resolv.conf 2>/dev/null | grep -E '^nameserver' || echo 'NO_NAMESERVERS'"
+        parser_regex: "nameserver\\s+(?P<dns_ip>\\d+\\.\\d+\\.\\d+\\.\\d+|::1)"
+        fact_key: "configured_dns"
+      - hypothesis_id: "resolver_service_down"
+        command: "systemctl is-active systemd-resolved 2>/dev/null || systemctl is-active dnsmasq 2>/dev/null || echo 'NO_RESOLVER'"
+        parser_regex: "(?P<resolver_status>active|inactive|failed|NO_RESOLVER)"
+        fact_key: "resolver_status"
+      - hypothesis_id: "bad_nameserver_config"
+        command: "nslookup google.com 2>&1 | tail -5"
+        parser_regex: "(?P<dns_result>Address|NXDOMAIN|connection timed out|server can't find|SERVFAIL)"
+        fact_key: "dns_query_result"
+      - hypothesis_id: "dns_network_blocked"
+        command: "dig @8.8.8.8 google.com +timeout=3 2>&1 | head -5"
+        parser_regex: "(?P<dig_result>;; connection timed out|status: NOERROR|status: SERVFAIL)"
+        fact_key: "direct_dns_test"
+      - hypothesis_id: "bad_nameserver_config"
+        command: "resolvectl status 2>/dev/null | grep 'DNS Servers' || echo 'NO_RESOLVECTL'"
+        parser_regex: "DNS Servers:\\s+(?P<resolvectl_dns>.+)"
+        fact_key: "resolvectl_dns_servers"
+    root_cause_analysis:
+      - hypothesis_id: "bad_nameserver_config"
+        condition:
+          fact: "dns_query_result"
+          operator: "contains"
+          value: "connection timed out"
+        root_cause: "DNS resolution failed. Configured nameservers: {{configured_dns.dns_ip}}. Direct query to 8.8.8.8: {{direct_dns_test.dig_result}}. Resolver through standard DNS failed."
+        recommended_fixes:
+          - command: "resolvectl dns eth0 1.1.1.1 8.8.8.8 2>/dev/null || echo 'nameserver 1.1.1.1' > /etc/resolv.conf && echo 'nameserver 8.8.8.8' >> /etc/resolv.conf"
+            explanation: "Set working nameservers (Cloudflare + Google public DNS)"
+            is_safe: false
+          - command: "ping -c 2 -W 2 1.1.1.1 && ping -c 2 -W 2 8.8.8.8"
+            explanation: "Verify network connectivity to well-known DNS servers"
+            is_safe: true
+      - hypothesis_id: "resolver_service_down"
+        condition:
+          fact: "resolver_status"
+          operator: "contains"
+          value: "inactive"
+        root_cause: "System DNS resolver (systemd-resolved/dnsmasq) is {{resolver_status.resolver_status}}. DNS resolution depends on this local service."
+        recommended_fixes:
+          - command: "systemctl start systemd-resolved && systemctl enable systemd-resolved"
+            explanation: "Start and enable systemd-resolved for DNS resolution"
+            is_safe: false
+          - command: "resolvectl flush-caches"
+            explanation: "Flush DNS resolver cache after starting the resolver"
+            is_safe: true
+      - hypothesis_id: "dns_network_blocked"
+        condition:
+          fact: "direct_dns_test"
+          operator: "contains"
+          value: "connection timed out"
+        root_cause: "Direct DNS query to 8.8.8.8 also timed out. DNS traffic (UDP/53) is likely blocked by firewall."
+        recommended_fixes:
+          - command: "iptables -L -n -v | grep -E ':53|dns' || ufw status | grep 53 || firewall-cmd --list-ports | grep 53"
+            explanation: "Check firewall rules for DNS port 53 blocking"
+            is_safe: true
+          - command: "ufw allow out 53/udp 2>/dev/null || firewall-cmd --add-port=53/udp 2>/dev/null || iptables -A OUTPUT -p udp --dport 53 -j ACCEPT"
+            explanation: "Allow outbound DNS traffic on UDP port 53"
+            is_safe: false
+
+  - rule_id: DNS_002
+    name: "Hostname Resolution Local Only"
+    priority: 8
+    trigger_symptoms:
+      - "dns lỗi"
+      - "không phân giải được domain"
+      - "không vào được web"
+      - "resolve"
+      - "hostname"
+      - "hosts file"
+      - "127.0.0.1"
+      - "localhost"
+    hypotheses:
+      - id: "hosts_file_override"
+        description: "/etc/hosts entry is overriding DNS resolution"
+        confidence: 0.50
+    evidence_gathering:
+      - hypothesis_id: "hosts_file_override"
+        command: "cat /etc/hosts 2>/dev/null | grep -v '^#' | grep -v '^$'"
+        parser_regex: "(?P<host_entry>\\d+\\.\\d+\\.\\d+\\.\\d+\\s+\\S+)"
+        fact_key: "hosts_file_entries"
+      - hypothesis_id: "hosts_file_override"
+        command: "getent hosts google.com 2>&1 || echo 'NO_HOSTS_RESOLVE'"
+        parser_regex: "(?P<getent_result>\\d+\\.\\d+\\.\\d+\\.\\d+)"
+        fact_key: "getent_result"
+      - hypothesis_id: "hosts_file_override"
+        command: "cat /etc/nsswitch.conf 2>/dev/null | grep -E '^hosts:' || echo 'NSSWITCH_FAILED'"
+        parser_regex: "hosts:\\s+(?P<hosts_order>\\S+)"
+        fact_key: "nsswitch_hosts"
+    root_cause_analysis:
+      - hypothesis_id: "hosts_file_override"
+        condition:
+          fact: "hosts_file_entries"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "/etc/hosts file has entries that may override DNS. nsswitch order: {{nsswitch_hosts.hosts_order}}. getent shows: {{getent_result.getent_result}}."
+        recommended_fixes:
+          - command: "cat /etc/hosts | grep -v '^\\s*#' | grep -v '^\\s*$'"
+            explanation: "Show all entries in /etc/hosts for review"
+            is_safe: true
+          - command: "# Edit /etc/hosts to remove incorrect entries. Check nsswitch.conf for 'hosts: files dns' order"
+            explanation: "Ensure /etc/hosts does not contain incorrect static mappings"
+            is_safe: false

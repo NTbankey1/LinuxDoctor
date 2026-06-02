@@ -1,0 +1,236 @@
+domain: package
+version: "1.0"
+description: "Package management troubleshooting (apt, yum, dnf, dpkg)"
+
+rules:
+  - rule_id: PKG_001
+    name: "APT Package Lock Held"
+    priority: 10
+    trigger_symptoms:
+      - "không cài được"
+      - "package lỗi"
+      - "apt lỗi"
+      - "không update được"
+      - "could not get lock"
+      - "unable to lock"
+      - "lock file"
+      - "resource temporarily unavailable"
+      - "dpkg lock"
+      - "apt lock"
+      - "another process"
+      - "is locked by another process"
+    hypotheses:
+      - id: "pkg_lock_held"
+        description: "Another package manager process is holding the lock"
+        confidence: 0.85
+    evidence_gathering:
+      - hypothesis_id: "pkg_lock_held"
+        command: "lsof /var/lib/dpkg/lock 2>/dev/null | grep dpkg || lsof /var/lib/apt/lists/lock 2>/dev/null || echo 'NO_LOCK_PROCESS'"
+        parser_regex: "(?P<lock_process>dpkg|apt).*?(?P<lock_pid>\\d+)"
+        fact_key: "lock_info"
+      - hypothesis_id: "pkg_lock_held"
+        command: "ps aux | grep -E 'apt|dpkg' | grep -v grep | head -5"
+        parser_regex: "(?P<apt_process>\\S+.*)"
+        fact_key: "apt_running_processes"
+      - hypothesis_id: "pkg_lock_held"
+        command: "fuser /var/lib/dpkg/lock 2>/dev/null || fuser /var/cache/apt/archives/lock 2>/dev/null || echo 'NO_FUSER'"
+        parser_regex: "(?P<fuser_result>\\d+)"
+        fact_key: "fuser_pid"
+    root_cause_analysis:
+      - hypothesis_id: "pkg_lock_held"
+        condition:
+          fact: "lock_info"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Package manager lock held by PID {{lock_info.lock_pid}} ({{lock_info.lock_process}}). Process: {{apt_running_processes.apt_process}}. Cannot install or remove packages until lock is released."
+        recommended_fixes:
+          - command: "ps -p {{lock_info.lock_pid}} -o pid,etime,cmd --no-headers"
+            explanation: "Check how long the lock-holding process has been running"
+            is_safe: true
+          - command: "kill {{lock_info.lock_pid}} || echo 'Process already terminated - check for stale lock'"
+            explanation: "Gracefully terminate the lock-holding process"
+            is_safe: false
+          - command: "rm -f /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null; dpkg --configure -a"
+            explanation: "Remove stale locks and reconfigure pending packages"
+            is_safe: false
+
+  - rule_id: PKG_002
+    name: "APT Broken Dependencies"
+    priority: 9
+    trigger_symptoms:
+      - "không cài được"
+      - "package lỗi"
+      - "apt lỗi"
+      - "không update được"
+      - "unmet dependencies"
+      - "broken packages"
+      - "depend on"
+      - "depends but it is not"
+      - "has broken packages"
+      - "dependency problem"
+      - "depends"
+      - "package is not installed"
+    hypotheses:
+      - id: "broken_dependencies"
+        description: "Package dependency tree is broken or incomplete"
+        confidence: 0.75
+      - id: "partial_install"
+        description: "Previous package installation or upgrade was interrupted"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "broken_dependencies"
+        command: "apt-get check 2>&1 | tail -5 || echo 'APT_CHECK_FAILED'"
+        parser_regex: "(?P<apt_check>broken|ok|Error|depend)"
+        fact_key: "apt_check_result"
+      - hypothesis_id: "partial_install"
+        command: "dpkg --audit 2>&1 | head -20"
+        parser_regex: "(?P<dpkg_audit>\\S+.*)"
+        fact_key: "dpkg_audit_result"
+      - hypothesis_id: "broken_dependencies"
+        command: "apt-cache policy 2>&1 | head -3"
+        parser_regex: "(?P<policy_ok>Package files)"
+        fact_key: "apt_policy"
+      - hypothesis_id: "broken_dependencies"
+        command: "dpkg --configure -a 2>&1 | head -10"
+        parser_regex: "(?P<configure_result>no packages|error|done)"
+        fact_key: "dpkg_configure_result"
+    root_cause_analysis:
+      - hypothesis_id: "broken_dependencies"
+        condition:
+          fact: "apt_check_result"
+          operator: "contains"
+          value: "broken"
+        root_cause: "Package dependency tree is broken. apt-get check reports errors. {{dpkg_audit_result.dpkg_audit}}."
+        recommended_fixes:
+          - command: "dpkg --configure -a"
+            explanation: "Configure any unpacked but not configured packages"
+            is_safe: false
+          - command: "apt-get --fix-broken install -y 2>&1"
+            explanation: "Fix broken dependencies by reinstalling/removing conflicting packages"
+            is_safe: false
+      - hypothesis_id: "partial_install"
+        condition:
+          fact: "dpkg_configure_result"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Previous package operation was interrupted. Packages are partially configured."
+        recommended_fixes:
+          - command: "dpkg --configure -a && apt-get install -f -y"
+            explanation: "Configure all pending packages and fix broken dependencies"
+            is_safe: false
+          - command: "apt-get update -y && apt-get upgrade -y"
+            explanation: "Refresh package cache and complete pending upgrades"
+            is_safe: false
+
+  - rule_id: PKG_003
+    name: "APT Repository Invalid"
+    priority: 8
+    trigger_symptoms:
+      - "không cài được"
+      - "package lỗi"
+      - "apt lỗi"
+      - "không update được"
+      - "repository does not have a release file"
+      - "404 not found"
+      - "failed to fetch"
+      - "clearsigned file isn't valid"
+      - "public key is not available"
+      - "NO_PUBKEY"
+      - "repository is not signed"
+      - "GPG error"
+    hypotheses:
+      - id: "repo_config_invalid"
+        description: "Repository URL in sources.list is invalid or unreachable"
+        confidence: 0.50
+      - id: "repo_gpg_expired"
+        description: "Repository GPG signing key is missing or expired"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "repo_config_invalid"
+        command: "cat /etc/apt/sources.list 2>/dev/null | grep -v '^#' | grep -v '^$' | head -10 || yum repolist 2>/dev/null | head -10 || dnf repolist 2>/dev/null | head -10 || echo 'NO_SOURCES'"
+        parser_regex: "(?P<sources_line>\\w+\\s+\\S+\\s+\\S+\\s+\\S+)"
+        fact_key: "apt_sources"
+      - hypothesis_id: "repo_gpg_expired"
+        command: "apt-key list 2>/dev/null | grep -E 'expired|expires' | head -5 || echo 'NO_EXPIRED_KEYS'"
+        parser_regex: "expired:\\s+(?P<gpg_expiry>\\S+)"
+        fact_key: "gpg_key_status"
+      - hypothesis_id: "repo_config_invalid"
+        command: "apt-get update 2>&1 | tail -10"
+        parser_regex: "(?P<update_result>Err:|W:.*404|W:.*Failed|W:.*NO_PUBKEY|Hit:)"
+        fact_key: "update_errors"
+    root_cause_analysis:
+      - hypothesis_id: "repo_config_invalid"
+        condition:
+          fact: "update_errors"
+          operator: "contains"
+          value: "404"
+        root_cause: "Repository returns 404 Not Found. The repository URL or distribution codename may be out of date. Sources: {{apt_sources.sources_line}}."
+        recommended_fixes:
+          - command: "sed -i 's/$(lsb_release -sc)/oldstable/g' /etc/apt/sources.list"
+            explanation: "Switch repository from current release to oldstable if distro is EOL"
+            is_safe: false
+          - command: "find /etc/apt/sources.list.d/ -name '*.list' -exec grep -l '404\\|not found' {} \\; 2>/dev/null | while read f; do echo 'Disabled:' $f; mv $f ${f}.disabled; done"
+            explanation: "Disable repository entries that return 404 errors"
+            is_safe: false
+      - hypothesis_id: "repo_gpg_expired"
+        condition:
+          fact: "gpg_key_status"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Repository GPG signing key has expired. {{gpg_key_status.gpg_expiry}}. Cannot verify package authenticity."
+        recommended_fixes:
+          - command: "apt-key adv --keyserver keyserver.ubuntu.com --recv-keys <missing_key_id>"
+            explanation: "Import missing repository GPG key from keyserver"
+            is_safe: false
+          - command: "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg 2>/dev/null || echo 'Update GPG key from repo upstream'"
+            explanation: "Re-add repository GPG key (example for Docker)"
+            is_safe: false
+
+  - rule_id: PKG_004
+    name: "YUM/DNF Transaction Check Error"
+    priority: 9
+    trigger_symptoms:
+      - "không cài được"
+      - "package lỗi"
+      - "apt lỗi"
+      - "không update được"
+      - "transaction check error"
+      - "yum"
+      - "dnf"
+      - "package conflicts"
+      - "file conflicts"
+      - "rpm"
+    hypotheses:
+      - id: "rpm_database_corrupt"
+        description: "RPM database corrupted or has conflicts"
+        confidence: 0.40
+      - id: "yum_transaction_blocked"
+        description: "YUM/DNF transaction blocked by dependency or file conflicts"
+        confidence: 0.50
+    evidence_gathering:
+      - hypothesis_id: "rpm_database_corrupt"
+        command: "rpm --verify -a 2>&1 | head -10 || echo 'RPM_VERIFY_FAILED'"
+        parser_regex: "(?P<rpm_error>\\S.*)"
+        fact_key: "rpm_verify"
+      - hypothesis_id: "yum_transaction_blocked"
+        command: "yum check 2>&1 | head -10 || dnf check 2>&1 | head -10 || echo 'YUM_DNF_CHECK_FAILED'"
+        parser_regex: "(?P<check_error>error|conflict|depend)"
+        fact_key: "yum_check"
+      - hypothesis_id: "rpm_database_corrupt"
+        command: "ls -la /var/lib/rpm/ 2>/dev/null | head -10 || echo 'NO_RPM_DB'"
+        parser_regex: "(?P<rpm_db>Packages|RPM_DB)"
+        fact_key: "rpm_db_status"
+    root_cause_analysis:
+      - hypothesis_id: "yum_transaction_blocked"
+        condition:
+          fact: "yum_check"
+          operator: "contains"
+          value: "conflict"
+        root_cause: "YUM/DNF check found package conflicts. Transaction blocked by dependency or file conflicts."
+        recommended_fixes:
+          - command: "package-cleanup --problems 2>/dev/null || dnf repoquery --duplicates 2>/dev/null | head -10"
+            explanation: "List packages with dependency problems or duplicates"
+            is_safe: true
+          - command: "rpm --rebuilddb && yum clean all 2>/dev/null || dnf clean all 2>/dev/null"
+            explanation: "Rebuild RPM database and clean package cache"
+            is_safe: false

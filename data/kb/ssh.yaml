@@ -1,0 +1,205 @@
+domain: ssh
+version: "2.0"
+description: "Knowledge base for SSH connection and authentication troubleshooting"
+
+rules:
+  - rule_id: SSH_001
+    name: "SSH Connection Refused or Service Down"
+    priority: 10
+    trigger_symptoms:
+      - "ssh không vào được"
+      - "ssh lỗi"
+      - "không ssh được"
+      - "kết nối từ xa lỗi"
+      - "connection refused"
+      - "ssh: connect to host"
+      - "port 22"
+      - "no route to host"
+      - "cannot connect"
+      - "ssh timeout"
+    hypotheses:
+      - id: "sshd_not_running"
+        description: "The SSH daemon (sshd) is not running on the target host"
+        confidence: 0.75
+      - id: "firewall_blocking_22"
+        description: "A firewall rule is blocking port 22"
+        confidence: 0.60
+    evidence_gathering:
+      - hypothesis_id: "sshd_not_running"
+        command: "systemctl is-active sshd 2>/dev/null || systemctl is-active ssh 2>/dev/null || echo 'SSHD_NOT_FOUND'"
+        parser_regex: "(?P<sshd_status>active|inactive|failed|unknown|SSHD_NOT_FOUND)"
+        fact_key: "sshd_status"
+      - hypothesis_id: "sshd_not_running"
+        command: "ss -tulpn 2>/dev/null | grep ':22 ' || netstat -tulpn 2>/dev/null | grep ':22 ' || echo 'NOT_LISTENING'"
+        parser_regex: "(?P<listening>LISTEN|NOT_LISTENING)"
+        fact_key: "port_22_listening"
+      - hypothesis_id: "firewall_blocking_22"
+        command: "iptables -L INPUT -n -v 2>/dev/null | grep ':22' || ufw status 2>/dev/null | grep -E '22|ssh' || firewall-cmd --list-services 2>/dev/null | grep ssh || echo 'FIREWALL_CHECK_FAILED'"
+        parser_regex: "(?P<fw_result>ACCEPT|DROP|REJECT|ACTIVE|ssh)"
+        fact_key: "firewall_ssh"
+    root_cause_analysis:
+      - hypothesis_id: "sshd_not_running"
+        condition:
+          fact: "sshd_status"
+          operator: "not_equals"
+          value: "active"
+        root_cause: "SSH daemon (sshd) is not running on this host. Status: {{sshd_status.sshd_status}}. Port 22 listening: {{port_22_listening.listening}}."
+        recommended_fixes:
+          - command: "sudo systemctl start sshd"
+            explanation: "Start the SSH daemon"
+            is_safe: false
+          - command: "sudo systemctl enable --now sshd"
+            explanation: "Enable SSH daemon to start on boot"
+            is_safe: false
+          - command: "journalctl -xu sshd -n 20 --no-pager"
+            explanation: "Check SSH daemon logs to see why it failed to start"
+            is_safe: true
+      - hypothesis_id: "firewall_blocking_22"
+        condition:
+          fact: "firewall_ssh"
+          operator: "contains"
+          value: "DROP"
+        root_cause: "Firewall policy blocks port 22. SSH traffic from external hosts is being dropped."
+        recommended_fixes:
+          - command: "sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT"
+            explanation: "Allow SSH inbound traffic in iptables"
+            is_safe: false
+          - command: "sudo ufw allow ssh"
+            explanation: "Allow SSH in UFW firewall"
+            is_safe: false
+          - command: "sudo firewall-cmd --permanent --add-service=ssh && sudo firewall-cmd --reload"
+            explanation: "Allow SSH in firewalld"
+            is_safe: false
+
+  - rule_id: SSH_002
+    name: "SSH Permission Denied / Authentication Failure"
+    priority: 10
+    trigger_symptoms:
+      - "ssh không vào được"
+      - "ssh lỗi"
+      - "không ssh được"
+      - "kết nối từ xa lỗi"
+      - "permission denied"
+      - "publickey"
+      - "authentication failed"
+      - "too many authentication failures"
+      - "no supported authentication methods"
+      - "key rejected"
+    hypotheses:
+      - id: "wrong_key_permissions"
+        description: "SSH key file permissions are too permissive (should be 600)"
+        confidence: 0.60
+      - id: "key_not_authorized"
+        description: "Public key is not in the server's authorized_keys"
+        confidence: 0.70
+      - id: "sshd_config_blocking"
+        description: "sshd_config settings are blocking public key authentication"
+        confidence: 0.40
+    evidence_gathering:
+      - hypothesis_id: "wrong_key_permissions"
+        command: "ls -la ~/.ssh/ 2>/dev/null | grep -E 'id_rsa|id_ed25519|id_ecdsa' | head -3 || echo 'NO_KEYS'"
+        parser_regex: "(?P<key_perms>[rwx-]{10})\\s+\\d+\\s+(?P<key_owner>\\S+)\\s+(?P<key_group>\\S+)\\s+\\d+\\s+(?P<key_name>id_\\w+)"
+        fact_key: "ssh_key_info"
+      - hypothesis_id: "wrong_key_permissions"
+        command: "ls -lad ~/.ssh/ 2>/dev/null || echo 'NO_SSH_DIR'"
+        parser_regex: "(?P<dir_perms>[rwx-]{10})\\s+(?P<dir_owner>\\S+)\\s+(?P<dir_group>\\S+)"
+        fact_key: "ssh_dir_info"
+      - hypothesis_id: "key_not_authorized"
+        command: "cat ~/.ssh/id_rsa.pub ~/.ssh/id_ed25519.pub ~/.ssh/authorized_keys 2>/dev/null | head -5 || echo 'NO_PUB_KEYS'"
+        parser_regex: "(?P<key_data>ssh-\\w+\\s+\\S+)"
+        fact_key: "ssh_pubkey_content"
+      - hypothesis_id: "sshd_config_blocking"
+        command: "grep -E '^(PubkeyAuthentication|PasswordAuthentication|ChallengeResponseAuthentication|PermitRootLogin|AuthorizedKeysFile)\\s' /etc/ssh/sshd_config 2>/dev/null | head -5 || echo 'NO_SSHD_CONFIG_READ'"
+        parser_regex: "(?P<config_directive>\\w+\\s+\\S+)"
+        fact_key: "sshd_auth_config"
+    root_cause_analysis:
+      - hypothesis_id: "wrong_key_permissions"
+        condition:
+          fact: "ssh_key_info"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SSH key {{ssh_key_info.key_name}} has permissions {{ssh_key_info.key_perms}}. SSH requires .ssh = 700, private keys = 600."
+        recommended_fixes:
+          - command: "chmod 600 ~/.ssh/id_rsa ~/.ssh/id_ed25519 2>/dev/null || true"
+            explanation: "Fix private key permissions to owner-only read/write"
+            is_safe: true
+          - command: "chmod 700 ~/.ssh/"
+            explanation: "Fix SSH directory permissions to owner-only"
+            is_safe: true
+          - command: "chmod 644 ~/.ssh/*.pub ~/.ssh/authorized_keys 2>/dev/null || true"
+            explanation: "Fix public key permissions"
+            is_safe: true
+      - hypothesis_id: "key_not_authorized"
+        condition:
+          fact: "ssh_pubkey_content"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SSH key exists but may not be authorized on the remote server. Check if the public key is in remote ~/.ssh/authorized_keys."
+        recommended_fixes:
+          - command: "ssh-copy-id user@hostname || echo 'Use: cat ~/.ssh/id_rsa.pub | ssh user@host \"cat >> ~/.ssh/authorized_keys\"'"
+            explanation: "Copy SSH public key to remote server's authorized_keys"
+            is_safe: true
+          - command: "ssh -v -o PreferredAuthentications=publickey user@hostname 2>&1 | grep -E 'Authenticated|debug1: Offering|debug1: Authentication' | head -10"
+            explanation: "Verbose SSH to see which keys are offered and why auth fails"
+            is_safe: true
+      - hypothesis_id: "sshd_config_blocking"
+        condition:
+          fact: "sshd_auth_config"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "sshd_config settings found: {{sshd_auth_config.config_directive}}. Server config may block public key authentication."
+        recommended_fixes:
+          - command: "grep -E '^PubkeyAuthentication|^PasswordAuthentication|^PermitRootLogin' /etc/ssh/sshd_config"
+            explanation: "Check SSH server authentication settings"
+            is_safe: true
+          - command: "sudo sed -i 's/PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config && sudo systemctl restart sshd"
+            explanation: "Enable public key authentication in sshd_config"
+            is_safe: false
+          - command: "sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config && sudo systemctl restart sshd"
+            explanation: "Enable password authentication as fallback"
+            is_safe: false
+
+  - rule_id: SSH_003
+    name: "SSH Host Key Changed"
+    priority: 8
+    trigger_symptoms:
+      - "ssh không vào được"
+      - "ssh lỗi"
+      - "không ssh được"
+      - "kết nối từ xa lỗi"
+      - "host key"
+      - "remote host identification has changed"
+      - "man-in-the-middle"
+      - "WARNING: REMOTE HOST IDENTIFICATION"
+      - "host key verification failed"
+      - "fingerprint"
+    hypotheses:
+      - id: "host_key_mismatch"
+        description: "Remote host key changed (possible MITM or host reinstall)"
+        confidence: 0.80
+    evidence_gathering:
+      - hypothesis_id: "host_key_mismatch"
+        command: "ssh-keygen -F $(hostname) 2>/dev/null || echo 'HOST_NOT_IN_KNOWN_HOSTS'"
+        parser_regex: "(?P<known_host_entry>\\S+\\s+\\S+\\s+\\S+)"
+        fact_key: "known_hosts_entry"
+      - hypothesis_id: "host_key_mismatch"
+        command: "ssh-keygen -l -f /etc/ssh/ssh_host_rsa_key.pub 2>/dev/null || ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null || echo 'NO_HOST_KEY'"
+        parser_regex: "(?P<host_fingerprint>\\d+\\s+SHA256:\\S+\\s+\\S+)"
+        fact_key: "host_key_fingerprint"
+    root_cause_analysis:
+      - hypothesis_id: "host_key_mismatch"
+        condition:
+          fact: "known_hosts_entry"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Remote host key mismatch. The remote host key has changed since last connection. This can indicate a legitimate reinstall or a man-in-the-middle attack."
+        recommended_fixes:
+          - command: "ssh-keygen -R $(hostname)"
+            explanation: "Remove the old host key from known_hosts to allow reconnection"
+            is_safe: false
+          - command: "ssh-keyscan -H $(hostname) >> ~/.ssh/known_hosts 2>/dev/null"
+            explanation: "Add the new host key to known_hosts automatically"
+            is_safe: false
+          - command: "ssh-keygen -l -f /etc/ssh/ssh_host_rsa_key.pub"
+            explanation: "Print current host key fingerprint for manual verification"
+            is_safe: true

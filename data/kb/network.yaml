@@ -1,0 +1,227 @@
+domain: network
+version: "1.0"
+description: "Network connectivity, routing, firewall, and interface troubleshooting"
+
+rules:
+  - rule_id: NET_001
+    name: "Network Interface Down"
+    priority: 10
+    trigger_symptoms:
+      - "mạng lỗi"
+      - "không có mạng"
+      - "mất mạng"
+      - "không kết nối được"
+      - "network unreachable"
+      - "no route to host"
+      - "timeout"
+      - "network is down"
+      - "interface down"
+      - "link down"
+      - "cannot reach"
+      - "connection timed out"
+      - "network error"
+    hypotheses:
+      - id: "interface_admin_down"
+        description: "Network interface is administratively down"
+        confidence: 0.35
+      - id: "no_default_gateway"
+        description: "Default gateway is missing from routing table"
+        confidence: 0.30
+      - id: "firewall_blocking"
+        description: "Firewall is dropping outbound traffic"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "interface_admin_down"
+        command: "ip link show | grep -E '^[0-9]+:' | head -10"
+        parser_regex: "(?P<iface>\\w+):\\s+<.*>(?P<flags>.*)\\s+mtu"
+        fact_key: "interfaces"
+      - hypothesis_id: "interface_admin_down"
+        command: "ip -4 addr show | grep -E 'inet\\s' | head -5"
+        parser_regex: "inet\\s+(?P<ip_addr>\\d+\\.\\d+\\.\\d+\\.\\d+/\\d+)"
+        fact_key: "ip_addresses"
+      - hypothesis_id: "no_default_gateway"
+        command: "ip route show default 2>/dev/null || echo 'NO_DEFAULT_ROUTE'"
+        parser_regex: "default via (?P<gateway>\\S+) dev (?P<gw_iface>\\S+)"
+        fact_key: "default_gateway"
+      - hypothesis_id: "firewall_blocking"
+        command: "iptables -L FORWARD -n -v 2>/dev/null | grep -v '^Chain\\|^target' | head -10 || ufw status 2>/dev/null | head -10 || echo 'FIREWALL_CHECK_FAILED'"
+        parser_regex: "(?P<fw_rule>DROP|REJECT)\\s+.*?(?P<fw_packets>\\d+)"
+        fact_key: "firewall_rules"
+      - hypothesis_id: "firewall_blocking"
+        command: "iptables -L INPUT -n -v 2>/dev/null | head -5"
+        parser_regex: "Chain INPUT.*policy\\s+(?P<fw_policy>ACCEPT|DROP)"
+        fact_key: "input_policy"
+      - hypothesis_id: "interface_admin_down"
+        command: "ping -c 3 -W 2 8.8.8.8 2>&1 | tail -1"
+        parser_regex: "(?P<packet_loss>\\d+)% packet loss"
+        fact_key: "connectivity_test"
+    root_cause_analysis:
+      - hypothesis_id: "interface_admin_down"
+        condition:
+          fact: "connectivity_test"
+          operator: "is_not_empty"
+          value: ""
+        after_condition:
+          fact: "ip_addresses"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Network connectivity failing: {{connectivity_test.packet_loss}}% packet loss. Interface {{interfaces.iface}} state: {{interfaces.flags}}."
+        recommended_fixes:
+          - command: "ip link set <iface> up"
+            explanation: "Bring the network interface up if it is administratively down"
+            is_safe: false
+          - command: "systemctl restart networking 2>/dev/null || systemctl restart NetworkManager 2>/dev/null"
+            explanation: "Restart networking service to reinitialize interfaces"
+            is_safe: false
+          - command: "dhclient -v <iface> 2>/dev/null || dhcpcd <iface> 2>/dev/null || echo 'Manual IP config required'"
+            explanation: "Renew DHCP lease on the interface"
+            is_safe: false
+      - hypothesis_id: "no_default_gateway"
+        condition:
+          fact: "default_gateway"
+          operator: "contains"
+          value: "NO_DEFAULT_ROUTE"
+        root_cause: "No default gateway configured. The system has no route to reach external networks."
+        recommended_fixes:
+          - command: "ip route add default via <gateway_ip> dev <interface>"
+            explanation: "Add default gateway route temporarily"
+            is_safe: false
+          - command: "# Add 'via <gateway_ip>' to /etc/sysconfig/network or /etc/network/interfaces"
+            explanation: "Make default gateway persistent in network config files"
+            is_safe: false
+      - hypothesis_id: "firewall_blocking"
+        condition:
+          fact: "firewall_rules"
+          operator: "contains"
+          value: "DROP"
+        root_cause: "Firewall is dropping traffic. INPUT policy: {{input_policy.fw_policy}}. Detected DROP/REJECT rules in active chain."
+        recommended_fixes:
+          - command: "iptables -L -n -v --line-numbers | grep -E 'DROP|REJECT'"
+            explanation: "List firewall DROP/REJECT rules with line numbers to identify blocking rules"
+            is_safe: true
+          - command: "iptables -D INPUT <rule_number>"
+            explanation: "Remove specific blocking firewall rule"
+            is_safe: false
+
+  - rule_id: NET_002
+    name: "Port In Use or Connection Refused"
+    priority: 9
+    trigger_symptoms:
+      - "mạng lỗi"
+      - "không có mạng"
+      - "mất mạng"
+      - "không kết nối được"
+      - "connection refused"
+      - "port closed"
+      - "port unavailable"
+      - "cannot connect"
+      - "port"
+      - "address already in use"
+      - "bind failed"
+    hypotheses:
+      - id: "port_not_listening"
+        description: "Service is not listening on the expected port"
+        confidence: 0.60
+      - id: "port_conflict"
+        description: "Port is already in use by another process"
+        confidence: 0.35
+    evidence_gathering:
+      - hypothesis_id: "port_not_listening"
+        command: "ss -tulpn 2>/dev/null | grep -E 'LISTEN' | head -20 || netstat -tulpn 2>/dev/null | grep LISTEN | head -20 || echo 'NO_LISTENING_PORTS'"
+        parser_regex: "(?P<protocol>\\w+)\\s+(?P<state>\\w+)\\s+\\S+\\s+\\S+\\s+(?P<bind_addr>\\S+):(?P<bind_port>\\d+)\\s+.*users:\\(\\(\"(?P<process>\\w+)\""
+        fact_key: "listening_ports"
+      - hypothesis_id: "port_conflict"
+        command: "ss -tulpn 2>/dev/null | grep -E ':(80|443|8080|3306|5432|6379|27017)\\s' | grep LISTEN | head -5 || netstat -tulpn 2>/dev/null | grep -E ':(80|443|8080|3306|5432|6379|27017)\\s' | head -5 || echo 'NO_PORTS_CHECKED'"
+        parser_regex: "\\(\\s*\\(\"(?P<port_process>\\w+)\",pid=(?P<port_pid>\\d+)"
+        fact_key: "port_processes"
+    root_cause_analysis:
+      - hypothesis_id: "port_not_listening"
+        condition:
+          fact: "listening_ports"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Expected service port not found. Listening ports: {{listening_ports.bind_port}} ({{listening_ports.process}}). Service may not be running or configured on a different port."
+        recommended_fixes:
+          - command: "ss -tulpn | grep LISTEN"
+            explanation: "Show all listening ports and their associated services"
+            is_safe: true
+          - command: "systemctl status <service> 2>/dev/null || service <service> status 2>/dev/null || echo 'Check service status manually'"
+            explanation: "Check if the expected service is running"
+            is_safe: true
+      - hypothesis_id: "port_conflict"
+        condition:
+          fact: "port_processes"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Port is held by another process: {{port_processes.port_process}} (PID {{port_processes.port_pid}}). Cannot bind."
+        recommended_fixes:
+          - command: "lsof -i :<port>"
+            explanation: "Show which process is holding the port in detail"
+            is_safe: true
+          - command: "systemctl stop <conflicting_service>"
+            explanation: "Stop the conflicting service to free the port"
+            is_safe: false
+          - command: "systemctl restart <target_service>"
+            explanation: "Restart the target service after freeing the port"
+            is_safe: false
+
+  - rule_id: NET_003
+    name: "High Packet Loss / Latency"
+    priority: 7
+    trigger_symptoms:
+      - "mạng lỗi"
+      - "không có mạng"
+      - "mất mạng"
+      - "không kết nối được"
+      - "packet loss"
+      - "high latency"
+      - "slow network"
+      - "network slow"
+      - "connection drops"
+    hypotheses:
+      - id: "network_congestion"
+        description: "Network congestion causing packet loss or high latency"
+        confidence: 0.50
+      - id: "interface_errors"
+        description: "Interface errors or duplex mismatch causing performance issues"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "network_congestion"
+        command: "ping -c 10 -W 1 8.8.8.8 2>&1 | tail -3"
+        parser_regex: "(?P<loss_pct>\\d+)%\\s+packet loss.*rtt min/avg/max/mdev = (?P<latency_min>[\\d.]+)/(?P<latency_avg>[\\d.]+)/(?P<latency_max>[\\d.]+)"
+        fact_key: "ping_stats"
+      - hypothesis_id: "interface_errors"
+        command: "ip -s link show | grep -A2 'RX:' | head -6"
+        parser_regex: "RX:.*(?P<rx_errors>\\d+)\\s+(?P<rx_dropped>\\d+)"
+        fact_key: "interface_rx"
+      - hypothesis_id: "interface_errors"
+        command: "ip -s link show | grep -A2 'TX:' | head -6"
+        parser_regex: "TX:.*(?P<tx_errors>\\d+)\\s+(?P<tx_dropped>\\d+)"
+        fact_key: "interface_tx"
+    root_cause_analysis:
+      - hypothesis_id: "network_congestion"
+        condition:
+          fact: "ping_stats"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Packet loss: {{ping_stats.loss_pct}}%. Latency avg: {{ping_stats.latency_avg}}ms. Loss > 1% indicates network congestion or link issues."
+        recommended_fixes:
+          - command: "mtr -r -c 10 8.8.8.8 2>/dev/null | head -20 || traceroute -n 8.8.8.8 2>/dev/null"
+            explanation: "Run MTR/traceroute to identify which hop is causing packet loss"
+            is_safe: true
+          - command: "ethtool -S <interface> 2>/dev/null | grep -E 'crc|fcs|collision|frame' | head -10"
+            explanation: "Check interface statistics for CRC errors indicating duplex mismatch"
+            is_safe: true
+      - hypothesis_id: "interface_errors"
+        condition:
+          fact: "interface_rx"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Interface errors detected: RX errors={{interface_rx.rx_errors}}, TX errors={{interface_tx.tx_errors}}. Possible duplex mismatch or faulty cable."
+        recommended_fixes:
+          - command: "ethtool <interface> | grep -E 'Speed|Duplex|Link detected'"
+            explanation: "Check interface speed, duplex, and link status for mismatch"
+            is_safe: true
+          - command: "ethtool -s <interface> speed 1000 duplex full autoneg on"
+            explanation: "Force correct speed and duplex settings on the interface"
+            is_safe: false

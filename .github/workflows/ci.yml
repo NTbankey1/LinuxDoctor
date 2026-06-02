@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check src/ tests/
+
+      - name: Type check
+        run: uv run python -c "import linux_doctor; print('Import OK')"
+
+      - name: Run tests
+        run: uv run pytest -v --tb=short
+
+      - name: Validate all KB files
+        run: |
+          uv run python -c "
+          from linux_doctor.infrastructure.kb_loader import KnowledgeBaseLoader
+          loader = KnowledgeBaseLoader('data/kb')
+          domains = loader.list_available_domains()
+          for d in domains:
+              kb = loader.load_domain(d)
+              assert kb is not None, f'{d}.yaml failed to load'
+              assert len(kb.rules) > 0, f'{d}.yaml has no rules'
+          print(f'All {len(domains)} KBs validated successfully')
+          "

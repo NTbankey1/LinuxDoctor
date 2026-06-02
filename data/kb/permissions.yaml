@@ -1,0 +1,255 @@
+domain: permissions
+version: "2.0"
+description: "Cross-cutting file and process permission troubleshooting"
+
+rules:
+  - rule_id: PERM_001
+    name: "File Permission Denied - Ownership"
+    priority: 10
+    trigger_symptoms:
+      - "không có quyền"
+      - "permission lỗi"
+      - "từ chối truy cập"
+      - "access denied"
+      - "permission denied"
+      - "cannot access"
+      - "access denied"
+      - "EACCES"
+      - "13: Permission denied"
+      - "open() failed"
+    hypotheses:
+      - id: "wrong_file_owner"
+        description: "File owned by wrong user or group"
+        confidence: 0.35
+      - id: "wrong_file_mode"
+        description: "File has incorrect permission mode bits"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "wrong_file_owner"
+        command: "stat -c '%U %G' /var/log/nginx/error.log 2>&1 || stat -c '%U %G' /etc/nginx/nginx.conf 2>&1 || echo 'STAT_FAILED'"
+        parser_regex: "(?P<owner>\\S+)\\s+(?P<group>\\S+)"
+        fact_key: "file_owner_group"
+      - hypothesis_id: "wrong_file_mode"
+        command: "stat -c '%a %A' /var/log/nginx/error.log 2>&1 || stat -c '%a %A' /etc/nginx/nginx.conf 2>&1 || echo 'STAT_FAILED'"
+        parser_regex: "(?P<mode>\\d+)\\s+(?P<perms>[drwx-]{10})"
+        fact_key: "file_mode_perms"
+      - hypothesis_id: "wrong_file_owner"
+        command: "ps aux | grep -E 'nginx|httpd|dockerd|sshd' | grep -v grep | head -3"
+        parser_regex: "(?P<process_user>\\S+)\\s+(?P<process_pid>\\d+)"
+        fact_key: "running_process_user"
+    root_cause_analysis:
+      - hypothesis_id: "wrong_file_owner"
+        condition:
+          fact: "file_owner_group"
+          operator: "is_not_empty"
+          value: ""
+        after_condition:
+          fact: "running_process_user"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "File permissions blocked: file owner is {{file_owner_group}} but service runs as {{running_process_user}}. Run: chown -R {{running_process_user}}:{{running_process_user}} <target_path>"
+        recommended_fixes:
+          - command: "chown -R {{running_process_user}}:{{running_process_user}} /var/log/nginx/"
+            explanation: "Fix ownership to match the running service user"
+            is_safe: false
+          - command: "chmod 755 /var/log/nginx/ && find /var/log/nginx/ -type f -exec chmod 644 {} \\;"
+            explanation: "Set correct directory and file permissions"
+            is_safe: false
+
+  - rule_id: PERM_002
+    name: "SELinux Context Blocking Access"
+    priority: 8
+    trigger_symptoms:
+      - "không có quyền"
+      - "permission lỗi"
+      - "từ chối truy cập"
+      - "access denied"
+      - "selinux"
+      - "avc denial"
+      - "denied"
+      - "scontext"
+      - "selinux is preventing"
+      - "permission denied"
+    hypotheses:
+      - id: "selinux_enforcing_wrong_context"
+        description: "SELinux is enforcing and the file context does not match the expected type"
+        confidence: 0.70
+    evidence_gathering:
+      - hypothesis_id: "selinux_enforcing_wrong_context"
+        command: "getenforce 2>/dev/null || echo 'SELINUX_NOT_FOUND'"
+        parser_regex: "(?P<selinux_mode>Enforcing|Permissive|Disabled)"
+        fact_key: "selinux_mode"
+      - hypothesis_id: "selinux_enforcing_wrong_context"
+        command: "ls -Z /var/log/nginx/ 2>/dev/null | head -5 || ls -Z /var/www/ 2>/dev/null | head -5 || echo 'NO_LS_Z'"
+        parser_regex: "(?P<selinux_context>\\w+:\\w+:\\w+:\\w+)"
+        fact_key: "selinux_file_context"
+      - hypothesis_id: "selinux_enforcing_wrong_context"
+        command: "audit2why -a 2>/dev/null | grep -i 'denied.*name=.*scontext=.*tcontext=' | tail -3 || echo 'NO_AUDIT_LOG'"
+        parser_regex: "scontext=(?P<scontext>\\S+)\\s+tcontext=(?P<tcontext>\\S+)\\s+tclass=(?P<tclass>\\S+)"
+        fact_key: "selinux_denial"
+    root_cause_analysis:
+      - hypothesis_id: "selinux_enforcing_wrong_context"
+        condition:
+          fact: "selinux_mode"
+          operator: "equals"
+          value: "Enforcing"
+        after_condition:
+          fact: "selinux_file_context"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SELinux is enforcing and the file context is {{selinux_file_context}} which blocks access. Restore default contexts or set the correct boolean."
+        recommended_fixes:
+          - command: "restorecon -Rv /path/to/target"
+            explanation: "Restore default SELinux contexts for the target path"
+            is_safe: false
+          - command: "semanage fcontext -a -t httpd_sys_content_t '/path(/.*)?' && restorecon -Rv /path/"
+            explanation: "Set correct SELinux file type for web content"
+            is_safe: false
+          - command: "ausearch -m avc -ts recent | audit2why"
+            explanation: "Analyze SELinux denials to see if a boolean can fix it"
+            is_safe: true
+
+  - rule_id: PERM_003
+    name: "Filesystem Mounted Read-Only"
+    priority: 7
+    trigger_symptoms:
+      - "không có quyền"
+      - "permission lỗi"
+      - "từ chối truy cập"
+      - "access denied"
+      - "read-only file system"
+      - "cannot create"
+      - "permission denied"
+      - "read-only"
+      - "remounted"
+    hypotheses:
+      - id: "fs_mounted_ro"
+        description: "Filesystem was remounted read-only due to errors"
+        confidence: 0.60
+    evidence_gathering:
+      - hypothesis_id: "fs_mounted_ro"
+        command: "mount | grep ' / '"
+        parser_regex: "\\((?P<mount_options>[^)]+)\\)"
+        fact_key: "root_mount_options"
+      - hypothesis_id: "fs_mounted_ro"
+        command: "dmesg -T 2>/dev/null | grep -iE 'remount|filesystem.*error|EXT.*error' | tail -5 || echo 'NO_FS_ERRORS'"
+        parser_regex: "(?P<fs_error>remount.*ro|EXT\\S+.*error)"
+        fact_key: "fs_errors"
+    root_cause_analysis:
+      - hypothesis_id: "fs_mounted_ro"
+        condition:
+          fact: "mount_options"
+          operator: "contains"
+          value: "ro"
+        root_cause: "Filesystem remounted read-only. Kernel detected an I/O error and set the filesystem to read-only to prevent data corruption."
+        recommended_fixes:
+          - command: "grep -E 'EXT[0-9]-fs error|Buffer I/O error' /var/log/kern.log 2>/dev/null | tail -10 || journalctl -k --no-pager | grep -i 'error.*sd' | tail -10"
+            explanation: "Check kernel logs for filesystem errors to identify the failing device"
+            is_safe: true
+          - command: "fsck -n /dev/sdX"
+            explanation: "Check filesystem for errors without modifying (dry-run first)"
+            is_safe: false
+          - command: "smartctl -H /dev/sdX"
+            explanation: "Check disk health status for hardware failures"
+            is_safe: true
+
+  - rule_id: PERM_004
+    name: "Executable Permission Denied"
+    priority: 9
+    trigger_symptoms:
+      - "không có quyền"
+      - "permission lỗi"
+      - "từ chối truy cập"
+      - "access denied"
+      - "cannot execute"
+      - "permission denied"
+      - "not executable"
+      - "command not found"
+      - "exec format error"
+    hypotheses:
+      - id: "binary_missing_exec"
+        description: "Binary or script missing execute permission"
+        confidence: 0.50
+      - id: "noexec_mount"
+        description: "Filesystem mounted with noexec flag"
+        confidence: 0.30
+    evidence_gathering:
+      - hypothesis_id: "binary_missing_exec"
+        command: "stat -c '%a %A' $(which nginx 2>/dev/null || echo '/usr/sbin/nginx') 2>&1 || echo 'BINARY_NOT_FOUND'"
+        parser_regex: "(?P<bin_mode>\\d+)\\s+(?P<bin_perms>[drwx-]{10})"
+        fact_key: "binary_permissions"
+      - hypothesis_id: "noexec_mount"
+        command: "mount | grep -E '\\s/tmp\\s|\\s/var/tmp\\s'"
+        parser_regex: "\\((?P<tmp_mount_opts>[^)]+)\\)"
+        fact_key: "tmp_mount_options"
+    root_cause_analysis:
+      - hypothesis_id: "binary_missing_exec"
+        condition:
+          fact: "binary_permissions"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Binary is missing execute permission. Current: {{binary_permissions}}. Requires at least --x------."
+        recommended_fixes:
+          - command: "chmod +x /path/to/binary"
+            explanation: "Add execute permission to the binary or script"
+            is_safe: false
+          - command: "chmod 755 /path/to/binary"
+            explanation: "Set standard executable permissions (rwxr-xr-x)"
+            is_safe: false
+      - hypothesis_id: "noexec_mount"
+        condition:
+          fact: "tmp_mount_options"
+          operator: "contains"
+          value: "noexec"
+        root_cause: "Filesystem is mounted with noexec flag. Cannot execute binaries from this location."
+        recommended_fixes:
+          - command: "mount -o remount,exec /tmp"
+            explanation: "Remount the filesystem with exec flag enabled"
+            is_safe: false
+          - command: "cp /path/to/binary /usr/local/bin/ && chmod +x /usr/local/bin/binary"
+            explanation: "Copy binary to a filesystem without noexec flag"
+            is_safe: true
+
+  - rule_id: PERM_005
+    name: "SSH Key Permissions Too Permissive"
+    priority: 9
+    trigger_symptoms:
+      - "không có quyền"
+      - "permission lỗi"
+      - "từ chối truy cập"
+      - "access denied"
+      - "bad permissions"
+      - "too open"
+      - "unsafe permissions"
+      - "permissions 0644"
+      - "authentication refused"
+    hypotheses:
+      - id: "ssh_key_bad_perms"
+        description: "SSH key file permissions are too permissive"
+        confidence: 0.85
+    evidence_gathering:
+      - hypothesis_id: "ssh_key_bad_perms"
+        command: "ls -la ~/.ssh/ 2>&1 | grep -E 'id_rsa|id_ed25519|id_ecdsa|id_dsa' | head -3"
+        parser_regex: "(?P<key_perms>[rwx-]{10})\\s+\\d+\\s+(?P<key_owner>\\S+)\\s+(?P<key_group>\\S+)\\s+\\d+\\s+(?P<key_name>id_\\w+)"
+        fact_key: "ssh_key_info"
+      - hypothesis_id: "ssh_key_bad_perms"
+        command: "ls -lad ~/.ssh/ 2>&1 | grep -v 'No such'"
+        parser_regex: "(?P<ssh_dir_perms>[rwx-]{10})\\s+(?P<ssh_dir_owner>\\S+)\\s+(?P<ssh_dir_group>\\S+)"
+        fact_key: "ssh_dir_perms"
+    root_cause_analysis:
+      - hypothesis_id: "ssh_key_bad_perms"
+        condition:
+          fact: "ssh_key_info"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "SSH key {{ssh_key_name}} has dangerous permissions ({{ssh_key_perms}}). SSH requires: .ssh = 700, private keys = 600, public keys = 644."
+        recommended_fixes:
+          - command: "chmod 600 ~/.ssh/id_rsa ~/.ssh/id_ed25519 2>/dev/null || true"
+            explanation: "Fix private key permissions to owner-only read/write"
+            is_safe: true
+          - command: "chmod 644 ~/.ssh/*.pub 2>/dev/null || true"
+            explanation: "Fix public key permissions to world-readable"
+            is_safe: true
+          - command: "chmod 700 ~/.ssh/"
+            explanation: "Fix SSH directory permissions to owner-only"
+            is_safe: true

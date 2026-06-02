@@ -1,0 +1,305 @@
+domain: systemd
+version: "1.0"
+description: "Systemd service, unit, journal, and boot troubleshooting"
+
+rules:
+  - rule_id: SD_001
+    name: "Service Unit Failed - Exit Code Error"
+    priority: 10
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "failed to start"
+      - "service failed"
+      - "unit failed"
+      - "systemctl"
+      - "service not running"
+      - "exited with code"
+      - "status=1"
+      - "error"
+    hypotheses:
+      - id: "service_exit_failure"
+        description: "Service unit exited with non-zero exit code"
+        confidence: 0.75
+      - id: "service_start_limit"
+        description: "Service restart limit exceeded"
+        confidence: 0.20
+    evidence_gathering:
+      - hypothesis_id: "service_exit_failure"
+        command: "systemctl status 2>&1 | grep -E 'loaded|active|failed' | head -5 || echo 'SYSTEMCTL_FAILED'"
+        parser_regex: "(?P<failed_unit>●\\s+(?P<unit_name>\\S+)\\s+-\\s+(?P<unit_desc>.*))"
+        fact_key: "failed_services"
+      - hypothesis_id: "service_exit_failure"
+        command: "systemctl list-units --failed --no-legend 2>/dev/null | head -5 || echo 'NO_FAILED_UNITS'"
+        parser_regex: "(?P<failed_unit>\\S+)\\s+(?P<failed_load>\\S+)\\s+(?P<failed_active>\\S+)\\s+(?P<failed_desc>.*)"
+        fact_key: "systemd_failed_units"
+      - hypothesis_id: "service_exit_failure"
+        command: "journalctl -u <service> -n 20 --no-pager 2>/dev/null || journalctl -n 10 --no-pager 2>/dev/null | tail -10 || echo 'JOURNALCTL_FAILED'"
+        parser_regex: "(?P<log_entry>.*(?:error|fail|fatal|killed|signal|exit).*)"
+        fact_key: "service_journal_logs"
+      - hypothesis_id: "service_start_limit"
+        command: "systemctl show <service> -p StartLimitBurst -p StartLimitIntervalSec 2>/dev/null || echo 'LIMIT_UNKNOWN'"
+        parser_regex: "StartLimitBurst=(?P<burst>\\d+).*StartLimitIntervalSec=(?P<interval>\\d+)"
+        fact_key: "service_start_limits"
+    root_cause_analysis:
+      - hypothesis_id: "service_exit_failure"
+        condition:
+          fact: "failed_services"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Service {{failed_services.unit_name}} has failed: {{failed_services.unit_desc}}. Check journal for detailed error: journalctl -xu {{failed_services.unit_name}}."
+        recommended_fixes:
+          - command: "journalctl -xu {{failed_services.unit_name}} -n 50 --no-pager"
+            explanation: "Show last 50 log entries for the failed service"
+            is_safe: true
+          - command: "systemctl reset-failed {{failed_services.unit_name}} && systemctl restart {{failed_services.unit_name}}"
+            explanation: "Reset failed state and attempt to restart the service"
+            is_safe: false
+          - command: "systemctl status {{failed_services.unit_name}} -l --no-pager"
+            explanation: "Show full service status with all details"
+            is_safe: true
+      - hypothesis_id: "service_start_limit"
+        condition:
+          fact: "service_journal_logs"
+          operator: "contains"
+          value: "start-limit"
+        root_cause: "Service exceeded StartLimitBurst ({{service_start_limits.burst}} within {{service_start_limits.interval}}s). Systemd prevents rapid restart loops."
+        recommended_fixes:
+          - command: "systemctl reset-failed <service> && systemctl start <service>"
+            explanation: "Reset start limit counter and manually start the service"
+            is_safe: false
+          - command: "systemctl edit <service>"
+            explanation: "Add [Unit] StartLimitIntervalSec=0 to disable start limits (override via drop-in)"
+            is_safe: false
+
+  - rule_id: SD_002
+    name: "Service Dependency Failed"
+    priority: 9
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "dependency failed"
+      - "required by"
+      - "dependency"
+      - "depends on"
+      - "failed because"
+      - "not installed"
+    hypotheses:
+      - id: "dependency_chain_broken"
+        description: "One or more dependencies of the service failed"
+        confidence: 0.80
+    evidence_gathering:
+      - hypothesis_id: "dependency_chain_broken"
+        command: "systemctl list-dependencies <service> 2>/dev/null | head -20 || systemctl list-dependencies 2>/dev/null | grep 'failed' | head -10 || echo 'NO_DEPS'"
+        parser_regex: "(?P<dependency>\\S+\\.(?:service|target|socket|timer|mount|path))"
+        fact_key: "service_deps"
+      - hypothesis_id: "dependency_chain_broken"
+        command: "systemctl list-dependencies --reverse <service> 2>/dev/null | head -10 || echo 'NO_REVERSE_DEPS'"
+        parser_regex: "(?P<reverse_dep>\\S+)"
+        fact_key: "reverse_dependencies"
+    root_cause_analysis:
+      - hypothesis_id: "dependency_chain_broken"
+        condition:
+          fact: "service_deps"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Service {{failed_services.unit_name}} failed due to dependency: {{service_deps.dependency}} not running or failed."
+        recommended_fixes:
+          - command: "systemctl status {{service_deps.dependency}} -l --no-pager"
+            explanation: "Check the status of the failed dependency"
+            is_safe: true
+          - command: "journalctl -xu {{service_deps.dependency}} -n 30 --no-pager"
+            explanation: "Check journal for the failed dependency to understand root cause"
+            is_safe: true
+          - command: "systemctl restart {{service_deps.dependency}} && systemctl restart <service>"
+            explanation: "Restart the dependency first, then the original service"
+            is_safe: false
+
+  - rule_id: SD_003
+    name: "Unit File Masked"
+    priority: 9
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "masked"
+      - "unit is masked"
+      - "cannot start"
+      - "is masked"
+    hypotheses:
+      - id: "unit_masked"
+        description: "Service unit is masked and cannot be started"
+        confidence: 0.90
+    evidence_gathering:
+      - hypothesis_id: "unit_masked"
+        command: "systemctl is-enabled <service> 2>/dev/null || systemctl is-enabled 2>/dev/null | grep -E 'masked' | head -5 || echo 'NO_MASKED'"
+        parser_regex: "(?P<enable_status>enabled|disabled|masked|static|indirect)"
+        fact_key: "unit_enable_status"
+      - hypothesis_id: "unit_masked"
+        command: "ls -la /etc/systemd/system/<service> 2>/dev/null || ls -la /etc/systemd/system/*.d/ 2>/dev/null || echo 'NO_UNIT_LINK'"
+        parser_regex: "(?P<unit_link>->\\s+/dev/null)"
+        fact_key: "unit_link_check"
+    root_cause_analysis:
+      - hypothesis_id: "unit_masked"
+        condition:
+          fact: "unit_enable_status"
+          operator: "contains"
+          value: "masked"
+        root_cause: "Service unit is masked. Masked units are symlinked to /dev/null and cannot be started. Admin has explicitly disabled this service."
+        recommended_fixes:
+          - command: "systemctl unmask <service>"
+            explanation: "Unmask the service unit so it can be started"
+            is_safe: false
+          - command: "systemctl enable --now <service>"
+            explanation: "Enable and start the service after unmasking"
+            is_safe: false
+
+  - rule_id: SD_004
+    name: "Service Timeout During Start"
+    priority: 8
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "timed out"
+      - "start timed out"
+      - "stop timed out"
+      - "timeout"
+      - "job failed"
+      - "start operation timed out"
+    hypotheses:
+      - id: "service_start_timeout"
+        description: "Service exceeded TimeoutStartSec during startup"
+        confidence: 0.65
+    evidence_gathering:
+      - hypothesis_id: "service_start_timeout"
+        command: "systemctl show <service> -p TimeoutStartUSec 2>/dev/null | head -3 || echo 'TIMEOUT_UNKNOWN'"
+        parser_regex: "TimeoutStartUSec=(?P<timeout_value>\\w+)"
+        fact_key: "timeout_config"
+      - hypothesis_id: "service_start_timeout"
+        command: "journalctl -u <service> -n 20 --no-pager 2>/dev/null | head -20"
+        parser_regex: "(?P<log_entry>.*(?:timeout|Timed out|timed out).*)"
+        fact_key: "timeout_logs"
+      - hypothesis_id: "service_start_timeout"
+        command: "systemctl show <service> -p ExecStart 2>/dev/null | head -3 || echo 'EXECSTART_UNKNOWN'"
+        parser_regex: "ExecStart=(?P<exec_cmd>\\{ path=/?[^;]+)"
+        fact_key: "exec_start"
+    root_cause_analysis:
+      - hypothesis_id: "service_start_timeout"
+        condition:
+          fact: "timeout_logs"
+          operator: "contains"
+          value: "timed out"
+        root_cause: "Service exceeded timeout of {{timeout_config.timeout_value}}. The ExecStart command {{exec_start.exec_cmd}} did not complete within the configured timeout."
+        recommended_fixes:
+          - command: "systemctl edit <service> --drop-in=timeout.conf"
+            explanation: "Create override to increase TimeoutStartSec (e.g., TimeoutStartSec=120)"
+            is_safe: false
+          - command: "journalctl -u <service> -n 50 --no-pager"
+            explanation: "Full journal to see what the service was doing during the timeout"
+            is_safe: true
+
+  - rule_id: SD_005
+    name: "Journal Corruption or Full"
+    priority: 7
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "journal"
+      - "journald"
+      - "journal corrupt"
+      - "cannot open journal"
+      - "journal file"
+    hypotheses:
+      - id: "journal_corrupted"
+        description: "Systemd journal files are corrupted or storage exhausted"
+        confidence: 0.60
+    evidence_gathering:
+      - hypothesis_id: "journal_corrupted"
+        command: "journalctl --verify 2>&1 | head -10 || echo 'VERIFY_FAILED'"
+        parser_regex: "(?P<verify_result>PASS|FAIL|error)"
+        fact_key: "journal_integrity"
+      - hypothesis_id: "journal_corrupted"
+        command: "journalctl --disk-usage 2>&1 || echo 'DISK_USAGE_FAILED'"
+        parser_regex: "(?P<journal_size>Archived and active journals use \\S+)"
+        fact_key: "journal_disk_usage"
+      - hypothesis_id: "journal_corrupted"
+        command: "du -sh /var/log/journal/ 2>/dev/null || du -sh /run/log/journal/ 2>/dev/null || echo 'NO_JOURNAL_DIR'"
+        parser_regex: "(?P<journal_dir_size>\\S+)\\s+(?P<journal_path>\\S+)"
+        fact_key: "journal_dir_size"
+    root_cause_analysis:
+      - hypothesis_id: "journal_corrupted"
+        condition:
+          fact: "journal_integrity"
+          operator: "contains"
+          value: "FAIL"
+        root_cause: "Systemd journal is corrupted or has integrity errors. Journal size: {{journal_disk_usage.journal_size}}."
+        recommended_fixes:
+          - command: "journalctl --rotate && journalctl --vacuum-time=1d"
+            explanation: "Rotate journal files and clean to 1 day to purge corrupt entries"
+            is_safe: false
+          - command: "rm -f /var/log/journal/*/system.journal && systemctl restart systemd-journald"
+            explanation: "Delete corrupt journal file and restart journald to recreate"
+            is_safe: false
+          - command: "journalctl --vacuum-size=100M"
+            explanation: "Limit journal disk usage to 100MB"
+            is_safe: false
+
+  - rule_id: SD_006
+    name: "Systemd Boot or Initrd Failure"
+    priority: 8
+    trigger_symptoms:
+      - "service không chạy"
+      - "không start được"
+      - "systemd lỗi"
+      - "dịch vụ không hoạt động"
+      - "boot"
+      - "boot failed"
+      - "kernel panic"
+      - "initrd"
+      - "dracut"
+      - "emergency mode"
+      - "rescue mode"
+      - "fallback shell"
+    hypotheses:
+      - id: "boot_failure"
+        description: "System failed to boot into multi-user or graphical target"
+        confidence: 0.55
+    evidence_gathering:
+      - hypothesis_id: "boot_failure"
+        command: "systemctl get-default 2>/dev/null || echo 'NO_DEFAULT'"
+        parser_regex: "(?P<default_target>\\S+\\.target)"
+        fact_key: "default_target"
+      - hypothesis_id: "boot_failure"
+        command: "systemctl list-units --failed --no-legend 2>/dev/null | head -10"
+        parser_regex: "(?P<boot_failure_unit>\\S+)\\s+(?P<boot_failure_state>failed)"
+        fact_key: "boot_failed_units"
+      - hypothesis_id: "boot_failure"
+        command: "journalctl -b -p err --no-pager 2>/dev/null | head -20 || echo 'NO_BOOT_LOG'"
+        parser_regex: "(?P<boot_errors>.*)"
+        fact_key: "boot_errors"
+    root_cause_analysis:
+      - hypothesis_id: "boot_failure"
+        condition:
+          fact: "boot_failed_units"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "System boot completed with {{boot_failed_units.boot_failure_unit}} in failed state. Default target: {{default_target.default_target}}."
+        recommended_fixes:
+          - command: "systemctl status {{boot_failed_units.boot_failure_unit}} -l --no-pager"
+            explanation: "Check status of the failed boot unit"
+            is_safe: true
+          - command: "journalctl -b -p err | tail -30"
+            explanation: "Show errors from current boot to identify the root cause"
+            is_safe: true
+          - command: "systemd-analyze blame | head -10"
+            explanation: "Show which services took the longest to start during boot"
+            is_safe: true

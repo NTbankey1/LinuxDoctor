@@ -1,0 +1,168 @@
+domain: cpu
+version: "1.0"
+description: "CPU, process, and load troubleshooting knowledge base"
+
+rules:
+  - rule_id: CPU_001
+    name: "Runaway Process Consuming CPU"
+    priority: 10
+    trigger_symptoms:
+      - "cpu cao"
+      - "cpu đầy"
+      - "máy chậm"
+      - "load cao"
+      - "high cpu"
+      - "100% cpu"
+      - "cpu overload"
+      - "process stuck"
+      - "not responding"
+      - "cpu usage"
+      - "high load"
+      - "process using"
+    hypotheses:
+      - id: "runaway_process"
+        description: "Single process consuming disproportionate CPU"
+        confidence: 0.75
+      - id: "fork_bomb_process"
+        description: "Process rapidly forking exhausting CPU and PIDs"
+        confidence: 0.25
+    evidence_gathering:
+      - hypothesis_id: "runaway_process"
+        command: "ps aux --sort=-%cpu 2>/dev/null | head -5"
+        parser_regex: "(?P<proc_user>\\S+)\\s+(?P<proc_pid>\\d+)\\s+(?P<proc_cpu>\\S+)\\s+(?P<proc_mem>\\S+)\\s+.*(?P<proc_cmd>\\S.*)"
+        fact_key: "top_cpu_processes"
+      - hypothesis_id: "runaway_process"
+        command: "uptime"
+        parser_regex: "load average:\\s+(?P<load_1>\\d+\\.\\d+),\\s+(?P<load_5>\\d+\\.\\d+),\\s+(?P<load_15>\\d+\\.\\d+)"
+        fact_key: "load_averages"
+      - hypothesis_id: "runaway_process"
+        command: "nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo '4'"
+        parser_regex: "(?P<cpu_count>\\d+)"
+        fact_key: "cpu_count"
+      - hypothesis_id: "fork_bomb_process"
+        command: "ps -eo pid,ppid,pidstat,cmd --sort=-pid 2>/dev/null | head -20 || ps -eo pid,ppid,cmd --sort=-pid 2>/dev/null | head -20"
+        parser_regex: "(?P<fork_pid>\\d+)\\s+(?P<fork_ppid>\\d+)\\s+(?P<fork_cmd>\\S.*)"
+        fact_key: "process_tree"
+    root_cause_analysis:
+      - hypothesis_id: "runaway_process"
+        condition:
+          fact: "top_cpu_processes"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Runaway process: {{top_cpu_processes.proc_cmd}} (PID {{top_cpu_processes.proc_pid}}) using {{top_cpu_processes.proc_cpu}}% CPU. System load: {{load_averages.load_1}} (1m) across {{cpu_count.cpu_count}} cores."
+        recommended_fixes:
+          - command: "ps -p {{top_cpu_processes.proc_pid}} -o pid,pcpu,pmem,rss,vsz,etime,cmd --no-headers"
+            explanation: "Get detailed process info including elapsed time to confirm runaway"
+            is_safe: true
+          - command: "kill -TERM {{top_cpu_processes.proc_pid}} && sleep 1 && ps -p {{top_cpu_processes.proc_pid}} >/dev/null 2>&1 || echo 'Process terminated'"
+            explanation: "Gracefully terminate the runaway process with SIGTERM"
+            is_safe: false
+          - command: "renice +10 -p {{top_cpu_processes.proc_pid}}"
+            explanation: "Reduce process priority to minimize impact before deciding to kill"
+            is_safe: false
+      - hypothesis_id: "fork_bomb_process"
+        condition:
+          fact: "process_tree"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "High number of forked processes detected from parent {{process_tree.fork_ppid}}. Possible fork bomb or rapid fork loop."
+        recommended_fixes:
+          - command: "ps --ppid {{process_tree.fork_ppid}} -o pid --no-headers | wc -l"
+            explanation: "Count number of child processes to assess fork bomb severity"
+            is_safe: true
+          - command: "kill -STOP {{process_tree.fork_ppid}}"
+            explanation: "Suspend the parent process to immediately stop further forking"
+            is_safe: false
+
+  - rule_id: CPU_002
+    name: "Zombie Process Accumulation"
+    priority: 8
+    trigger_symptoms:
+      - "cpu cao"
+      - "cpu đầy"
+      - "máy chậm"
+      - "load cao"
+      - "zombie"
+      - "defunct"
+      - "zombie process"
+      - "process state Z"
+    hypotheses:
+      - id: "zombie_processes"
+        description: "Accumulated zombie processes that parent failed to reap"
+        confidence: 0.70
+    evidence_gathering:
+      - hypothesis_id: "zombie_processes"
+        command: "ps aux | grep -c ' Z' 2>/dev/null || echo '0'"
+        parser_regex: "(?P<zombie_count>\\d+)"
+        fact_key: "zombie_count"
+      - hypothesis_id: "zombie_processes"
+        command: "ps aux | grep ' Z' | head -5 2>/dev/null"
+        parser_regex: "(?P<zombie_stats>\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+(?P<zombie_cmd>\\S.*))"
+        fact_key: "zombie_details"
+      - hypothesis_id: "zombie_processes"
+        command: "ps -eo pid,ppid,state,cmd | grep -E '^\\s*\\d+\\s+\\d+\\s+Z' | head -5"
+        parser_regex: "\\s+(?P<z_pid>\\d+)\\s+(?P<z_ppid>\\d+)\\s+Z"
+        fact_key: "zombie_parents"
+    root_cause_analysis:
+      - hypothesis_id: "zombie_processes"
+        condition:
+          fact: "zombie_count"
+          operator: "greater_than"
+          value: "5"
+        root_cause: "{{zombie_count}} zombie processes detected. Zombies consume PID slots and kernel memory. Parent process {{zombie_parents.z_ppid}} not reaping children."
+        recommended_fixes:
+          - command: "kill -SIGCHLD {{zombie_parents.z_ppid}}"
+            explanation: "Send SIGCHLD to parent process to force reaping of terminated children"
+            is_safe: false
+          - command: "kill -TERM {{zombie_parents.z_ppid}} && echo 'Parent sent SIGTERM' || echo 'Cannot kill init or kernel thread'"
+            explanation: "Terminate parent process if it's stuck (zombie parent will be reaped by init)"
+            is_safe: false
+
+  - rule_id: CPU_003
+    name: "High CPU Steal Time (Virtualization)"
+    priority: 7
+    trigger_symptoms:
+      - "cpu cao"
+      - "cpu đầy"
+      - "máy chậm"
+      - "load cao"
+      - "steal time"
+      - "stolen cpu"
+      - "virtual machine"
+      - "vm cpu"
+      - "hypervisor"
+      - "slow"
+    hypotheses:
+      - id: "cpu_steal_contention"
+        description: "Hypervisor CPU overcommit causing steal time"
+        confidence: 0.65
+    evidence_gathering:
+      - hypothesis_id: "cpu_steal_contention"
+        command: "top -bn1 2>/dev/null | grep '%Cpu' || mpstat 1 1 2>/dev/null | tail -1"
+        parser_regex: "(?P<steal_pct>\\d+\\.\\d+)\\s+(?P<iowait_pct>\\d+\\.\\d+)$"
+        fact_key: "cpu_steal"
+      - hypothesis_id: "cpu_steal_contention"
+        command: "cat /proc/stat | grep '^cpu ' | head -1"
+        parser_regex: "cpu\\s+(?P<user>\\d+)\\s+(?P<nice>\\d+)\\s+(?P<system>\\d+)\\s+(?P<idle>\\d+)\\s+(?P<iowait>\\d+)\\s+(?P<irq>\\d+)\\s+(?P<softirq>\\d+)\\s+(?P<steal>\\d+)"
+        fact_key: "cpu_time_stats"
+      - hypothesis_id: "cpu_steal_contention"
+        command: "lscpu | grep -i 'hypervisor' || echo 'NOT_A_VM'"
+        parser_regex: "(?P<hypervisor>Hypervisor vendor:\\s+\\S+)"
+        fact_key: "detected_hypervisor"
+    root_cause_analysis:
+      - hypothesis_id: "cpu_steal_contention"
+        condition:
+          fact: "cpu_steal"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "CPU steal time is {{cpu_steal.steal_pct}}%. This indicates the hypervisor is overcommitting CPU resources. The VM is waiting for physical CPU cycles."
+        recommended_fixes:
+          - command: "lscpu | grep -i '^CPU(s)' && echo '---' && echo 'Total load:' && uptime"
+            explanation: "Check vCPU count and current load to determine if right-sizing is needed"
+            is_safe: true
+          - command: "# Move to less contended host or request CPU reservation from hypervisor admin"
+            explanation: "CPU steal >10% requires hypervisor-level intervention"
+            is_safe: true
+          - command: "# Consider: cpufreq governor, disabling C-states, or migrating to dedicated host"
+            explanation: "Long-term mitigations for steal time contention"
+            is_safe: true

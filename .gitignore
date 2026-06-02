@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+wheels/
+
+# Virtual environment
+.venv/
+venv/
+
+# ML model artifacts
+models/*.pkl
+models/*.joblib
+
+# Database
+*.db
+*.sqlite
+data/db/
+
+# Testing
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

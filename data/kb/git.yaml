@@ -1,0 +1,231 @@
+domain: git
+version: "1.0"
+description: "Git repository, commit, push, pull, and auth troubleshooting"
+
+rules:
+  - rule_id: GIT_001
+    name: "Git Push/Pull Rejected - Diverged History"
+    priority: 10
+    trigger_symptoms:
+      - "git lỗi"
+      - "không push được"
+      - "conflict"
+      - "xung đột git"
+      - "push rejected"
+      - "failed to push"
+      - "cannot push"
+      - "push declined"
+      - "rejected"
+      - "non-fast-forward"
+      - "fetch first"
+      - "pull before pushing"
+    hypotheses:
+      - id: "diverged_branch_history"
+        description: "Local and remote branches have diverged"
+        confidence: 0.75
+      - id: "branch_protected"
+        description: "Remote branch has push protection rules"
+        confidence: 0.15
+    evidence_gathering:
+      - hypothesis_id: "diverged_branch_history"
+        command: "git rev-list --count --left-right @{upstream}...HEAD 2>&1 || echo 'NO_UPSTREAM'"
+        parser_regex: "(?P<ahead>\\d+)\\s+(?P<behind>\\d+)"
+        fact_key: "git_divergence"
+      - hypothesis_id: "diverged_branch_history"
+        command: "git symbolic-ref -q HEAD 2>&1 || echo 'DETACHED'"
+        parser_regex: "(?P<branch>refs/heads/\\S+)"
+        fact_key: "git_branch"
+      - hypothesis_id: "diverged_branch_history"
+        command: "git remote -v 2>&1 | head -4"
+        parser_regex: "(?P<remote_name>\\w+)\\s+(?P<remote_url>\\S+)\\s+\\(fetch\\)"
+        fact_key: "git_remote"
+      - hypothesis_id: "branch_protected"
+        command: "git status --porcelain 2>&1"
+        parser_regex: "(?P<status_code>[MADRCU?!]{1,2})\\s+(?P<changed_file>\\S+)"
+        fact_key: "git_uncommitted"
+    root_cause_analysis:
+      - hypothesis_id: "diverged_branch_history"
+        condition:
+          fact: "git_divergence"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Branch {{git_branch.branch}} has diverged: {{git_divergence.ahead}} commits ahead, {{git_divergence.behind}} commits behind {{git_remote.remote_name}}. Non-fast-forward push rejected."
+        recommended_fixes:
+          - command: "git pull --rebase origin $(git symbolic-ref --short HEAD)"
+            explanation: "Pull remote changes and rebase local commits on top"
+            is_safe: false
+          - command: "git push --force-with-lease origin $(git symbolic-ref --short HEAD)"
+            explanation: "Force push with lease as safety net (only if certain about overwrite)"
+            is_safe: false
+      - hypothesis_id: "branch_protected"
+        condition:
+          fact: "git_uncommitted"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "Remote branch may be protected. Local has {{git_uncommitted.status_code}} changes on branch {{git_branch.branch}}. Push rejected by remote server rules."
+        recommended_fixes:
+          - command: "git stash"
+            explanation: "Stash local changes before pulling remote updates"
+            is_safe: true
+          - command: "git fetch origin && git rebase origin/$(git symbolic-ref --short HEAD)"
+            explanation: "Rebase on latest remote branch after stashing"
+            is_safe: false
+
+  - rule_id: GIT_002
+    name: "Git Authentication Failure"
+    priority: 9
+    trigger_symptoms:
+      - "git lỗi"
+      - "không push được"
+      - "conflict"
+      - "xung đột git"
+      - "authentication failed"
+      - "could not read from remote"
+      - "permission denied (publickey)"
+      - "no supported authentication methods"
+      - "auth"
+      - "cannot clone"
+      - "could not authenticate"
+    hypotheses:
+      - id: "ssh_key_not_loaded"
+        description: "SSH agent has no keys loaded for Git remote authentication"
+        confidence: 0.50
+      - id: "wrong_remote_url"
+        description: "Remote URL uses wrong protocol or credentials"
+        confidence: 0.25
+    evidence_gathering:
+      - hypothesis_id: "ssh_key_not_loaded"
+        command: "ssh-add -l 2>&1 || echo 'SSH_AGENT_EMPTY'"
+        parser_regex: "(?P<key_info>\\d+ SHA256:\\S+ \\S+|The agent has no identities\\.)"
+        fact_key: "ssh_agent_keys"
+      - hypothesis_id: "wrong_remote_url"
+        command: "git remote get-url origin 2>&1 || echo 'NO_REMOTE'"
+        parser_regex: "(?P<remote_url>\\S+)"
+        fact_key: "git_remote_url"
+      - hypothesis_id: "ssh_key_not_loaded"
+        command: "ls -la ~/.ssh/id_* 2>/dev/null | head -3 || echo 'NO_SSH_KEYS'"
+        parser_regex: "(?P<key_file>.+id_(?:rsa|ed25519|ecdsa))"
+        fact_key: "ssh_key_files"
+    root_cause_analysis:
+      - hypothesis_id: "ssh_key_not_loaded"
+        condition:
+          fact: "ssh_agent_keys"
+          operator: "contains"
+          value: "no identities"
+        root_cause: "SSH agent has no identities loaded. SSH keys exist on disk ({{ssh_key_files.key_file}}) but are not loaded into the agent."
+        recommended_fixes:
+          - command: "ssh-add ~/.ssh/id_ed25519 2>/dev/null || ssh-add ~/.ssh/id_rsa 2>/dev/null || ssh-keygen -t ed25519 -C '$(whoami)@$(hostname)' -f ~/.ssh/id_ed25519 -N '' && ssh-add ~/.ssh/id_ed25519"
+            explanation: "Add existing SSH key to agent or generate new key"
+            is_safe: true
+          - command: "ssh -T git@github.com 2>&1 || ssh -T git@gitlab.com 2>&1"
+            explanation: "Test SSH authentication to GitHub/GitLab"
+            is_safe: true
+      - hypothesis_id: "wrong_remote_url"
+        condition:
+          fact: "git_remote_url"
+          operator: "contains"
+          value: "https://"
+        root_cause: "Remote uses HTTPS URL ({{git_remote_url.remote_url}}). If authentication fails, switch to SSH or configure credential helper."
+        recommended_fixes:
+          - command: "git remote set-url origin git@github.com:$(echo {{git_remote_url.remote_url}} | sed 's|https://github.com/||' | sed 's|https://gitlab.com/||' | sed 's|\\.git$||').git"
+            explanation: "Switch remote from HTTPS to SSH URL format"
+            is_safe: false
+          - command: "git config --global credential.helper store"
+            explanation: "Configure Git to cache credentials to avoid repeated HTTPS auth prompts"
+            is_safe: false
+
+  - rule_id: GIT_003
+    name: "Git Repository Corruption"
+    priority: 8
+    trigger_symptoms:
+      - "git lỗi"
+      - "không push được"
+      - "conflict"
+      - "xung đột git"
+      - "corrupt"
+      - "object not found"
+      - "packfile"
+      - "bad object"
+      - "fatal:"
+      - "repository"
+      - "git fsck"
+      - "missing object"
+    hypotheses:
+      - id: "git_object_corruption"
+        description: "Git object database has corrupted or missing objects"
+        confidence: 0.60
+    evidence_gathering:
+      - hypothesis_id: "git_object_corruption"
+        command: "git fsck 2>&1 | head -20"
+        parser_regex: "(?P<fsck_result>error|missing|corrupt|dangling)\\s+(?P<fsck_obj>\\w+)\\s+(?P<fsck_ref>\\S+)"
+        fact_key: "git_fsck_errors"
+      - hypothesis_id: "git_object_corruption"
+        command: "git status 2>&1 | head -5"
+        parser_regex: "(?P<git_status>rebase|merge|detached|modified|clean)"
+        fact_key: "git_repo_state"
+      - hypothesis_id: "git_object_corruption"
+        command: "git count-objects -v 2>&1 | head -5"
+        parser_regex: "count:\\s+(?P<object_count>\\d+).*?size:\\s+(?P<pack_size>\\d+)"
+        fact_key: "git_object_stats"
+    root_cause_analysis:
+      - hypothesis_id: "git_object_corruption"
+        condition:
+          fact: "git_fsck_errors"
+          operator: "contains"
+          value: "missing"
+        root_cause: "Git fsck found corrupted objects: {{git_fsck_errors.fsck_result}} {{git_fsck_errors.fsck_obj}}. Repository integrity compromised."
+        recommended_fixes:
+          - command: "git stash && git gc --aggressive --prune=now"
+            explanation: "Aggressively garbage collect to repair object database"
+            is_safe: false
+          - command: "git fetch origin && git reset --hard origin/$(git symbolic-ref --short HEAD)"
+            explanation: "Reset local branch to remote state (CAUTION: loses local changes)"
+            is_safe: false
+          - command: "git reflog expire --expire=now --all && git gc --prune=now"
+            explanation: "Expire reflog and force garbage collection"
+            is_safe: false
+
+  - rule_id: GIT_004
+    name: "Git Merge Conflict"
+    priority: 9
+    trigger_symptoms:
+      - "git lỗi"
+      - "không push được"
+      - "conflict"
+      - "xung đột git"
+      - "merge conflict"
+      - "conflict"
+      - "automatic merge failed"
+      - "unmerged files"
+      - "merge failed"
+      - "fix conflicts"
+    hypotheses:
+      - id: "unresolved_conflicts"
+        description: "Files have unresolved merge conflict markers"
+        confidence: 0.80
+    evidence_gathering:
+      - hypothesis_id: "unresolved_conflicts"
+        command: "git diff --name-only --diff-filter=U 2>&1 || git status --porcelain 2>&1 | grep '^[UDA]' || echo 'NO_CONFLICTS'"
+        parser_regex: "(?P<conflict_file>\\S+)"
+        fact_key: "conflict_files"
+      - hypothesis_id: "unresolved_conflicts"
+        command: "git status 2>&1 | grep -c 'both modified' || echo '0'"
+        parser_regex: "(?P<conflict_count>\\d+)"
+        fact_key: "conflict_count"
+    root_cause_analysis:
+      - hypothesis_id: "unresolved_conflicts"
+        condition:
+          fact: "conflict_files"
+          operator: "is_not_empty"
+          value: ""
+        root_cause: "{{conflict_count.conflict_count}} files have merge conflicts. First conflicted file: {{conflict_files.conflict_file}}. Automatic merge failed due to overlapping changes."
+        recommended_fixes:
+          - command: "grep -rn '<<<<<<<' . --include='*.py' --include='*.js' --include='*.ts' --include='*.json' --include='*.yaml' --include='*.yml' --include='*.md' 2>/dev/null | head -10"
+            explanation: "Find all files with unresolved conflict markers"
+            is_safe: true
+          - command: "git mergetool 2>/dev/null || echo 'No mergetool configured. Resolve manually in conflicted files.'"
+            explanation: "Launch configured merge tool to resolve conflicts"
+            is_safe: true
+          - command: "git checkout --theirs <file> && git add <file>"
+            explanation: "Accept remote version for a conflicted file (use with caution)"
+            is_safe: false
