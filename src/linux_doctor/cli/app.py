@@ -168,7 +168,7 @@ def _col_ai_reasoning(session: Session) -> Panel:
         row.append(f"{icon} ", style="")
         row.append(desc, style="white")
         if outcome:
-            row.append(f"\n   └ ", style="dim")
+            row.append("\n   └ ", style="dim")
             row.append(outcome, style="bright_cyan")
         items.append(row)
 

@@ -21,6 +21,7 @@ from linux_doctor.domain.models import (
     CommandRecommendation,
     Diagnosis,
     Evidence,
+    Fact,
     Session,
 )
 from linux_doctor.engines.hypothesis_ranker import HypothesisRanker
@@ -170,6 +171,10 @@ class RuleEngine:
 
         session.diagnosis = diagnosis
         session.reasoning_chain = self.chain
+        session.facts = [
+            Fact(key=k, value=v, source="rule_engine", confidence=1.0)
+            for k, v in self.facts.items()
+        ]
 
         return diagnosis
 
