@@ -345,7 +345,7 @@ rules:
 
   - rule_id: DOCKER_008
     name: "Check Docker Logs"
-    priority: 15
+    priority: 8
     trigger_symptoms:
       - "docker logs"
       - "xem log docker"
@@ -377,7 +377,7 @@ rules:
 
   - rule_id: DOCKER_007
     name: "Docker Not Installed"
-    priority: 15
+    priority: 8
     trigger_symptoms:
       - "docker install"
       - "how to install docker"

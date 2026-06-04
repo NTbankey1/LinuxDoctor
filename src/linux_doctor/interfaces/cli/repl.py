@@ -135,7 +135,7 @@ def run_diagnosis(query: str) -> None:
             "confidence": diagnosis.confidence,
             "conclusive": diagnosis.is_conclusive,
         })
-        _print_diagnosis(diagnosis, domain, confidence, method)
+        _print_diagnosis(agent.session, domain, confidence, method)  # type: ignore[arg-type]
 
         # Show interactive fix options
         if diagnosis.recommended_fixes:
