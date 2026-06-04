@@ -117,13 +117,12 @@ class RuleEngine:
         matched_rules = self._match_symptoms(user_query)
         if not matched_rules:
             log.warning("[yellow]No matching rules found for this query.[/yellow]")
-            log.info("[cyan]Falling back to evaluating all rules in the domain.[/cyan]")
             self.chain.add_step(
                 ReasoningStepType.SYMPTOM_MATCHED,
-                f"No symptoms matched for: '{user_query}'. Falling back to all rules.",
-                confidence=0.5,
+                f"No symptoms matched for: '{user_query}'",
+                confidence=0.0,
             )
-            matched_rules = self.kb.rules
+            return None
 
         # Step 2: Multi-hop forward chaining loop
         self._forward_chain(matched_rules)
