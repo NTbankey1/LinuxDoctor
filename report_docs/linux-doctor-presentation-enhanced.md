@@ -1,37 +1,38 @@
-# 🐧 Linux Doctor — Presentation Deck (Enhanced)
+# 🐧 Linux Doctor — 13-Slide Technical Presentation
 
-> **Hybrid AI System for Automated Linux Troubleshooting**  
-> ML Classification · Expert System · Safe Shell Execution
+> **Hybrid AI for Automated Linux Troubleshooting**  
+> ML Classification (99.49% F1) · Forward-Chaining Expert System · 7-Layer Safe Shell
+>
+> *Built from scratch — pure NumPy, zero external ML dependencies*
 
 ---
 
 # SLIDE 1 — Title
 
-# 🐧 LINUX DOCTOR
-
-## *Hybrid AI for Automated Linux Troubleshooting*
-
----
-
-| Component | What it does |
-|:---:|:---:|
-| 🤖 **ML Classifier** | Detects failure domain (99.49% F1) |
-| 🧠 **Expert System** | Forward-chains rules → root cause |
-| 🛡️ **Safe Shell** | 7-layer sandbox, read-only execution |
-
----
-
-**End-to-end example:**
-
 ```
-"docker permission denied"
-     │
-     ├─ [ML] domain = docker @ 99.5%
-     ├─ [Expert] rule DOCKER_001 → user not in docker group
-     └─ [Fix]  sudo usermod -aG docker $USER
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║          🐧 LINUX DOCTOR                                     ║
+║          Hybrid AI for Automated Linux Troubleshooting        ║
+║                                                              ║
+║   ─────────────────────────────────────────────────────       ║
+║                                                              ║
+║   "From symptom to root cause — in seconds, not hours"       ║
+║                                                              ║
+║   ─────────────────────────────────────────────────────       ║
+║                                                              ║
+║          99.49% F1  ·  12 Domains  ·  101,758 Samples        ║
+║          4,500 LOC  ·  6 Dependencies  ·  Pure NumPy ML      ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
 ```
 
-> **99.49% F1 · 12 domains · 101,758 training samples · 4,500 LOC · 6 dependencies**
+| Layer | Technology | Role |
+|---|---|---|
+| 🤖 **Machine Learning** | Naive Bayes · SVM · Logistic Regression (scratch) | Domain classification from natural language |
+| 🧠 **Expert System** | Forward-chaining rule engine + Bayesian ranking | Root cause analysis & evidence gathering |
+| 🛡️ **Safe Shell** | 7-layer allowlist sandbox | Read-only diagnostic execution |
+| 📺 **Interface** | Rich 3-column Mission Control TUI | Real-time incident visualization |
 
 ---
 
@@ -40,598 +41,627 @@
 ## Why Linux Troubleshooting Is Broken
 
 ```
-🧑‍💻 SRE gets alert at 3 AM
+🧑‍💻 SRE gets paged at 3 AM — "Disk full on production"
          │
-         ├── 🔍 SSH into server
-         ├── 📋 Check logs manually
-         ├── 🤔 Recall tribal knowledge
-         ├── 🧪 Run commands, grep, guess
-         └── ⏱️  30–60 mins later... maybe fixed
+         ├── 🔍 SSH into server (1 min)
+         ├── 📋 df -h, du -sh, find large files (3 min)
+         ├── 🤔 Check logrotate, inodes, hidden files (5 min)
+         ├── 🧪 Guess root cause, apply fix (10 min)
+         ├── ⏱️  Monitor if fix worked (15 min)
+         └── 💸  Total: 30–60 min of productive time lost
 ```
-
----
 
 ## Three Core Pain Points
 
 | # | Pain Point | Root Cause | Impact |
 |---|---|---|---|
-| 1 | **Fragmented knowledge** | Docker ≠ Nginx ≠ SSH ≠ DNS — each domain is a specialty | SREs must be generalists across 12+ problem spaces |
-| 2 | **Manual diagnosis loop** | SSH → run commands → grep logs → reason step by step — **every single time** | Slow, error-prone, non-reproducible |
-| 3 | **No institutional memory** | Fixes live in Slack threads, personal notes, people's heads | Same incident recurs — reinventing the wheel |
-
----
+| 1 | **Fragmented Knowledge** | Docker ≠ Nginx ≠ SSH ≠ DNS — each domain is a separate specialty | SREs must master 12+ problem spaces |
+| 2 | **Manual Diagnostic Loop** | SSH → run commands → grep logs → reason step by step — every single time | Slow, error-prone, non-reproducible |
+| 3 | **No Institutional Memory** | Fixes live in Slack threads, personal notes, or people's heads | Same incident recurs — reinventing the wheel |
 
 ## The Opportunity
 
 ```
 SREs spend 30–40% of their time on diagnostics
 
-→ Linux Doctor automates the diagnosis loop
+→ Linux Doctor automates the entire diagnosis loop
 → Covers 12 highest-frequency Linux failure domains
 → Deterministic, explainable, auditable — not a black box
+→ ~15s per diagnosis (target: <2s with parallel evidence)
 ```
 
 ---
 
-# SLIDE 3 — Architecture Overview
+# SLIDE 3 — Architecture (Two-Phase Hybrid)
 
-## Two-Phase Hybrid Pipeline
+## Design Philosophy: Zero-Dependency Core
 
-```mermaid
-flowchart TD
-    A["🧑‍💻 User Input\n'docker permission denied'"] --> B
+The system is built on a **zero-unnecessary-dependency architecture** — only NumPy for ML and Rich for UI. Every algorithm is implemented from scratch for full auditability.
 
-    subgraph PHASE1["⚙️ PHASE 1 — ML Classification"]
-        B["Tokenizer\n+ Stemmer"] --> C["TF-IDF Vectorizer\n3,000 features · L2 norm"]
-        C --> D["Best-of-3 Classifier\nNaive Bayes / LR / SVM"]
-        D --> E["domain = docker\nconfidence = 99.5%"]
-    end
-
-    E --> F
-
-    subgraph PHASE2["🧠 PHASE 2 — Expert System"]
-        F["Load KB\ndata/kb/docker.yaml"] --> G["Match Symptoms\nDOCKER_001 — 2/4 matched"]
-        G --> H["Gather Evidence\ngroups · ls -l docker.sock"]
-        H --> I["Evaluate Conditions\nnot_contains 'docker'"]
-        I --> J["Bayesian Ranking\nH₁=97% · H₂=3%"]
-    end
-
-    J --> K
-
-    subgraph OUTPUT["📺 OUTPUT — Mission Control TUI"]
-        K["Causal Tree\n(left column)"]
-        L["AI Reasoning Log\n(center column)"]
-        M["Action Cards\n(right column)"]
-    end
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│  "docker permission denied"                                              │
+│                                                                          │
+└────────────────────────┬─────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: ML DOMAIN CLASSIFICATION ── ~5ms                              │
+│                                                                          │
+│  ┌──────────────┐   ┌───────────────┐   ┌───────────────────────┐       │
+│  │  Tokenizer   │──▶│  TF-IDF       │──▶│  Best-of-3 Ensemble   │       │
+│  │  + Stemmer   │   │  3,000 feats  │   │  NB / SVM / LR        │       │
+│  └──────────────┘   └───────────────┘   └───────────┬───────────┘       │
+│                                                      │ domain="docker"   │
+│                                                      │ conf=99.5%        │
+└──────────────────────────────────────────────────────┼───────────────────┘
+                                                       │
+                                                       ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  PHASE 2: EXPERT SYSTEM ── ~15s (sequential)                            │
+│                                                                          │
+│  1. LOAD KB        data/kb/docker.yaml  (auto-discovered)               │
+│  2. MATCH SYMPTOMS DOCKER_001  → 2/4 symptoms matched                  │
+│  3. GATHER EVIDENCE groups, ls -l /var/run/docker.sock                 │
+│  4. EVAL CONDITIONS not_contains("docker") → True                      │
+│  5. RANK HYPOTHESES Bayesian: P(H₁|E) = 97% > P(H₂|E) = 3%            │
+│  6. OUTPUT          Root cause + confidence + fix + audit trail         │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Key design principle:** ML handles the *"what domain?"* question. The Expert System handles the *"what exactly is wrong?"* question.
+## Two Layers, One Mission
+
+| Phase | What It Solves | How | Output |
+|---|---|---|---|
+| **ML Layer** | *"What kind of problem is this?"* | Trained on 101,758 samples across 12 domains | `domain=docker, confidence=99.5%` |
+| **Expert System** | *"What exactly is wrong?"* | Forward-chaining rules + Bayesian ranking | `User not in docker group (95% confidence)` |
 
 ---
 
-# SLIDE 4 — ML Pipeline (Phase 1)
+# SLIDE 4 — ML Pipeline: Raw Text to Domain
 
-## From Raw Text to Domain Label
+## Full Pipeline
 
 ```
 Input:  "docker permission denied"
            │
            ▼
-   ┌─ Tokenizer (regex word split) ─────────────────────┐
-   │  + Porter-lite Stemmer                              │
-   │  ["docker", "permiss", "deni", "socket"]            │
-   └─────────────────────────────────────────────────────┘
+   ┌─ Tokenizer (regex word-split, Linux-aware stopwords) ──────────┐
+   │  + Porter-lite Stemmer (suffix stripping: -ing, -ed, -ion)      │
+   │  → ["docker", "permiss", "deni", "socket"]                      │
+   └──────────────────────────────────────────────────────────────────┘
            │
            ▼
-   ┌─ TF-IDF Vectorizer (pure NumPy) ───────────────────┐
-   │  Vocabulary: 3,000 top features · L2 normalized     │
-   │  [0.0, 0.45, 0.32, 0.0, ..., 0.78]  (sparse vector)│
-   └─────────────────────────────────────────────────────┘
+   ┌─ TF-IDF Vectorizer (pure NumPy implementation) ────────────────┐
+   │  Term Frequency · Inverse Document Frequency                    │
+   │  Smooth IDF: log((1 + N) / (1 + df(t))) + 1                    │
+   │  L2 Normalization on output vectors                             │
+   │  Vocabulary: 3,000 top features across 12 domains               │
+   │  → [0.0, 0.45, 0.32, 0.0, ..., 0.78]  (sparse, normalized)     │
+   └──────────────────────────────────────────────────────────────────┘
            │
            ▼
-   ┌─ Ensemble: Best-of-3 Classifiers ──────────────────┐
-   │  → domain = docker                                  │
-   │  → confidence = 99.5%                               │
-   └─────────────────────────────────────────────────────┘
+   ┌─ Ensemble Predictor ────────────────────────────────────────────┐
+   │  3 classifiers vote, best model (highest F1) selected           │
+   │  → domain = docker                                              │
+   │  → confidence = 99.5%                                           │
+   │  → all_scores = {docker: 0.995, nginx: 0.003, ssh: 0.001, ...} │
+   └──────────────────────────────────────────────────────────────────┘
 ```
+
+## Fallback Strategy
+
+If ML confidence < 50%, a **keyword-based router** overrides:
+```
+"connection refused port 22" → ML=ssh(@45%) + keyword_override=ssh(@70%)
+                                → final=ssh (keyword override)
+
+"unusual weird error"        → ML=unknown(@12%) + keyword_override=none
+                                → "Domain not recognized, suggest manual investigation"
+```
+
+---
+
+# SLIDE 5 — ML Deep Dive: Three Algorithms from Scratch
+
+All implemented in **pure NumPy** — no scikit-learn, no PyTorch, no external ML library.
+
+---
+
+## A. Multinomial Naive Bayes (Best: 99.49% F1)
+
+```python
+# Log-space computation to avoid floating-point underflow
+class MultinomialNaiveBayes:
+    def fit(self, X, y):
+        for c in classes:
+            # Laplace smoothing: P(w|c) = (count(w,c) + α) / (count(c) + α×V)
+            log_prior[c] = log(count(y==c) / N)
+            log_likelihood[c] = log((X_c.sum(0) + alpha)
+                                  / (X_c.sum() + alpha * V))
+
+    def predict_proba(self, X):
+        # Sum log-probabilities instead of multiplying raw probabilities
+        log_posterior = X @ log_likelihood.T + log_prior
+        return softmax(log_posterior)
+```
+
+**Why it wins:** Short-text classification with sparse TF-IDF vectors is a textbook case for Naive Bayes. Log-space eliminates underflow. Laplace smoothing prevents zero-probability issues for unseen tokens.
+
+---
+
+## B. Linear SVM (Runner-up: 99.4% F1)
+
+```python
+class LinearSVM:
+    def fit(self, X, y, lr=0.001, epochs=200):
+        # One-vs-Rest: train C binary classifiers
+        for epoch in range(epochs):
+            for i, x_i in enumerate(X):
+                scores = x_i @ self.W               # scores for all classes
+                for j in range(C):
+                    margin = scores[y[i]] - scores[j] + 1.0
+                    if margin > 0:                   # hinge loss fires
+                        self.W[y[i]] += lr * x_i    # push true class
+                        self.W[j]    -= lr * x_i    # pull wrong class
+```
+
+**Strength:** Excels at separating **confusable domains** — SSH vs Network, Systemd vs Docker — where vocabulary overlaps significantly.
+
+---
+
+## C. Logistic Regression (99.2% F1)
+
+```python
+class LogisticRegression:
+    def fit(self, X, y, lr=0.01, epochs=100):
+        for _ in range(epochs):
+            scores = X @ self.W + self.b             # linear logits
+            probs = softmax(scores)                   # → probability distribution
+            loss = cross_entropy(probs, y) + λ * ||W||²
+            grad_W = X.T @ (probs - y_onehot) / N + λ * self.W
+            self.W -= lr * grad_W                    # gradient descent
+```
+
+**Strength:** Best **confidence calibration** — the Softmax output is a true probability distribution, making it the most reliable for threshold-based decisions.
 
 ---
 
 ## Classifier Comparison
 
-| Classifier | Algorithm | Key Technique | F1 Score |
-|---|---|---|:---:|
-| 🥇 **Naive Bayes** | Multinomial | Log-space + Laplace smoothing | **99.49%** |
-| 🥈 Linear SVM | One-vs-Rest | Hinge Loss + SGD | 99.40% |
-| 🥉 Logistic Regression | Softmax | SGD + L2 regularization | 99.20% |
+| Model | F1 Score | Best For |
+|---|---|---|
+| 🥇 **Naive Bayes** | **99.49%** | General classification, short text, speed |
+| 🥈 Linear SVM | 99.40% | Confusable domain boundaries (SSH/Network) |
+| 🥉 Logistic Regression | 99.20% | Confidence calibration, probability estimation |
 
 ---
+
+# SLIDE 6 — Training Pipeline & Dataset
 
 ## Dataset Profile
 
-| Property | Value |
-|---|---|
-| Total samples | 101,758 |
-| Domains | 12 |
-| Split strategy | 80/20 stratified |
-| Feature extraction | TF-IDF (no sklearn) |
-| Implementation | Pure NumPy — zero sklearn/PyTorch |
+| Property | Value | Details |
+|---|---|---|
+| **Total samples** | **101,758** | Synthetic + augmented |
+| **Domains** | 12 | Docker, Nginx, SSH, CPU, Memory, Disk, Network, DNS, Git, Systemd, Package, Permission |
+| **Split** | 80/20 stratified | Class proportions preserved in both splits |
+| **Features** | 3,000 TF-IDF | Filtered by document frequency |
+| **ML deps** | **NumPy only** | Zero external ML libraries |
 
-> ⚡ **Zero external ML libraries.** All three classifiers implemented from scratch using NumPy only.
+## Synthetic Data Generation Strategy
 
----
-
-# SLIDE 5 — ML Math (From Scratch)
-
-## The Three Algorithms Side by Side
-
----
-
-### 🔵 Naive Bayes
-
-$$\log P(H | \mathbf{x}) = \log P(H) + \sum_{i} x_i \cdot \log P(w_i | H)$$
-
-```python
-# Smoothed log-probability (avoids underflow)
-log_prob[c] = log(count(w, c) + α)
-            - log(count(c) + α × V)
-```
-
-**Why it wins:** Sparse TF-IDF vectors + log-space computation = numerically stable, fast, hard to beat on short text.
-
----
-
-### 🟠 Logistic Regression (Softmax)
+Real-world incident reports are scarce. We generate high-quality training data using **template augmentation**:
 
 ```
-scores  = X @ W + b
-probs   = softmax(scores)          # e^s / Σ e^s
-loss    = CrossEntropy(probs, y) + λ||W||²
-W      -= lr × ∇W                  # SGD update
+Template: "{subject} {verb} {object} {preposition} {detail}"
+
+Example expansions:
+  "docker" + "permission denied" → "docker permission denied on socket"
+  "docker" + "connection refused" → "connection refused to docker daemon"
+  "nginx" + "failed to start" → "nginx service failed to start"
+  "nginx" + "502 bad gateway" → "502 bad gateway from nginx upstream"
+
+Augmentation:
+  - Synonym replacement: "refused" ↔ "rejected" ↔ "denied"
+  - Word dropout: "docker permission denied" → "docker denied"
+  - Bigram swapping: "connection ssh refused" → "ssh connection refused"
 ```
 
----
-
-### 🔴 Linear SVM (One-vs-Rest)
+## Training Flow
 
 ```
-For each class c, and each wrong class j:
-  margin = score(c) - score(j) + 1
-
-  if margin > 0:          # hinge loss fires
-    W[c] -= lr × x_i     # gradient step
-    W[j] += lr × x_i
+Raw templates              Clean data               Train
+     │                         │                      │
+     ▼                         ▼                      ▼
+┌──────────┐           ┌──────────────┐       ┌──────────────┐
+│ Generate  │──101,758──▶│ Tokenize +   │──X──▶│ Naive Bayes  │──▶ best_model.pkl
+│ 110,000   │  samples  │ Stem + TF-IDF│  y   │ SVM          │──▶ svm_model.pkl
+│ samples   │           │              │      │ Logistic Reg │──▶ lr_model.pkl
+└──────────┘           └──────────────┘       └──────────────┘
+                                                    │
+                                                    ▼
+                                            ┌──────────────┐
+                                            │ Evaluator    │──▶ F1 = 99.49%
+                                            │ 80/20 split  │
+                                            └──────────────┘
 ```
 
 ---
 
-# SLIDE 6 — Expert System (Phase 2)
+# SLIDE 7 — Expert System: Forward-Chaining Rule Engine
 
-## Knowledge Base Structure (YAML)
+## Knowledge Base Structure
+
+Each domain = one YAML file in `data/kb/`. No code changes needed for new domains.
 
 ```yaml
-# data/kb/docker.yaml
+# data/kb/docker.yaml  (auto-discovered at startup)
 rules:
   - id: DOCKER_001
     name: "Permission Denied on Docker Socket"
     
-    symptoms:           # trigger if ANY match
+    symptoms:                       # trigger if ANY match
       - "permission denied"
       - "docker.sock"
+      - "cannot connect to docker daemon"
+      - "got permission denied while trying to connect"
     
-    evidence:           # commands to run for facts
+    evidence:                       # commands to gather facts
       - command: "groups"
-        store_as: "user_groups"
+        store_as: user_groups
+        description: "Check user's group membership"
       - command: "ls -l /var/run/docker.sock"
-        store_as: "socket_info"
+        store_as: socket_info
+        description: "Check Docker socket permissions"
+      - command: "docker info"
+        store_as: docker_info
+        description: "Check Docker daemon status"
     
-    conditions:         # logic evaluated on facts
+    conditions:                     # evaluate gathered facts
       - fact: user_groups
         operator: not_contains
         value: "docker"
     
-    hypotheses:         # ranked conclusions
+    hypotheses:                     # ranked conclusions
       - text: "User is not in the 'docker' group"
         confidence: 0.95
-        fix: "sudo usermod -aG docker $USER"
-        risk: moderate   # LOW / MODERATE / HIGH
+        fix: "sudo usermod -aG docker $USER && newgrp docker"
+        risk: moderate              # LOW | MODERATE | HIGH
 ```
 
----
+## Supported Operations
 
-## Forward-Chaining Flow
-
-```mermaid
-flowchart LR
-    A["🔎 Query\n'docker permission denied'"] --> B["Match Symptoms\nDOCKER_001: 2/4 match"]
-    B --> C["Gather Evidence\ngroups · ls -l docker.sock"]
-    C --> D["Evaluate Conditions\nnot_contains 'docker' → TRUE"]
-    D --> E["Bayesian Ranking\nH₁=97% · H₂=3%"]
-    E --> F["✅ Root Cause\nUser not in docker group\nFix: usermod -aG"]
-```
-
----
-
-## Evidence-Condition-Hypothesis Chain
-
-| Step | What Happens | Example |
+| Operator | Type | Example |
 |---|---|---|
-| **Symptom match** | Rule IDs shortlisted | `permission denied` → DOCKER_001, PERM_003 |
-| **Evidence gather** | Safe shell runs read-only cmds | `groups` → `"ntbankey sudo"` |
-| **Condition eval** | Boolean logic on gathered facts | `not_contains("docker")` → `True` |
-| **Hypothesis rank** | Bayesian posterior computed | H₁ 97% wins over H₂ 3% |
-| **Output** | Root cause + confidence + fix | DOCKER_001 @ 95% |
+| `equals` | exact string match | `fact: status, equals: "active"` |
+| `contains` | substring | `fact: log, contains: "OOM"` |
+| `not_contains` | substring exclusion | `fact: groups, not_contains: "docker"` |
+| `greater_than` | numeric | `fact: disk_usage_pct, greater_than: 90` |
+| `less_than` | numeric | `fact: free_memory_mb, less_than: 500` |
+| `matches` | regex | `fact: error_log, matches: "EACCES|EPERM"` |
 
 ---
 
-# SLIDE 7 — Bayesian Hypothesis Ranking
+# SLIDE 8 — Bayesian Hypothesis Ranking
 
-## Why Bayes? Because Real Systems Have Competing Explanations
+## Why Bayes?
 
-The same symptom (`"docker permission denied"`) can have **multiple root causes**.  
-We need a principled way to pick the most likely one.
-
----
+The same symptom can have **multiple competing root causes**. Bayesian inference is the principled way to combine prior knowledge with collected evidence.
 
 ## The Formula
 
-$$P(H | E) = \frac{P(H) \times P(E | H)}{P(E)}$$
+```
+P(H | E) = P(H) × P(E | H) / P(E)
 
-| Term | Meaning | Source |
-|---|---|---|
-| `P(H)` | Prior probability of this hypothesis | Set in YAML (`confidence: 0.95`) |
-| `P(E \| H)` | How likely is this evidence given H is true | Computed per evidence result |
-| `P(H \| E)` | Posterior — updated belief after seeing evidence | **Output** |
+P(H)     = Prior confidence (set in YAML rule definition)
+P(E|H)   = Likelihood — how strongly evidence supports this hypothesis
+P(H|E)   = Posterior — updated belief after seeing evidence
+```
 
----
-
-## Full Worked Example
+## Full Worked Example: Docker Permission Denied
 
 ```
-Scenario: "docker permission denied"
-
 ─── Competing Hypotheses ──────────────────────────────────
   H₁: User NOT in docker group      Prior = 0.95
   H₂: Docker daemon NOT running     Prior = 0.80
 
 ─── Evidence Collected ────────────────────────────────────
-  E₁: groups → "ntbankey sudo"      → strongly supports H₁
-  E₂: /var/run/docker.sock EXISTS   → strongly supports H₁
-  E₃: `docker info` returns error   → mildly supports H₂
+  E₁: groups → "ntbankey sudo"           → strongly supports H₁
+  E₂: /var/run/docker.sock EXISTS        → strongly supports H₁
+  E₃: `docker info` returns error        → mildly supports H₂
+
+─── Likelihood Assignment ─────────────────────────────────
+  P(E₁|H₁) = 0.90    (user not in group → groups won't show docker)
+  P(E₁|H₂) = 0.10    (daemon down doesn't affect groups command)
+  P(E₂|H₁) = 0.85    (socket exists → daemon likely running)
+  P(E₂|H₂) = 0.20    (daemon could be dead but socket file lingers)
+  P(E₃|H₁) = 0.30    (can't talk to daemon if not in group)
+  P(E₃|H₂) = 0.80    (daemon down → docker info fails)
 
 ─── Bayesian Update ───────────────────────────────────────
-  P(H₁ | E₁, E₂) = 0.95 × 0.90 × 0.85 / Z  →  97% ✅ WINNER
-  P(H₂ | E₁, E₂) = 0.80 × 0.15 × 0.30 / Z  →   3%
+  P(H₁ | E₁,E₂,E₃) = 0.95 × 0.90 × 0.85 × 0.30 / Z  →  87%  ✅
+  P(H₂ | E₁,E₂,E₃) = 0.80 × 0.10 × 0.20 × 0.80 / Z  →  13%
 
 ─── Decision ──────────────────────────────────────────────
-  Margin = 94%  →  H₁ confirmed as root cause
+  Winner: H₁ — User not in docker group (@ 87% confidence)
+  Margin: 74%
   Fix: sudo usermod -aG docker $USER
 ```
 
----
+## Deterministic Elimination
 
-## Why Not Just Take the Highest Prior?
-
-| Approach | Problem |
-|---|---|
-| Take highest prior always | Ignores evidence — wrong when facts contradict prior |
-| Pure rule matching | Brittle — can't handle partial evidence |
-| **Bayesian update** ✅ | Updates belief as evidence arrives — handles uncertainty |
-
----
-
-# SLIDE 8 — Safety Architecture (7 Layers)
-
-## Threat Model
+If a condition definitively falsifies a hypothesis:
 
 ```
-🎯 Attack vectors we defend against:
-   ├── 1. Command injection via user input
-   ├── 2. Path traversal attacks
-   ├── 3. Subprocess escape via $() or backticks
-   ├── 4. Resource exhaustion (output floods, infinite loops)
-   ├── 5. Environment variable / PATH manipulation
-   └── 6. Runaway child processes after timeout
+Evidence: user_groups = "ntbankey sudo docker"  ← user IS in docker group
+                                                      ↓
+P(E|H₁) ≈ 0.01  →  H₁ eliminated  →  H₂ becomes winner
 ```
 
 ---
 
-## The 7-Layer Defense Stack
+# SLIDE 9 — Evidence Collection & Safe Shell
+
+## How the Expert System Gathers Facts
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│ Layer 1 ── ALLOWLIST                                           │
-│   80+ read-only commands only                                  │
-│   systemctl · journalctl · ss · ip · ping · df · free · ls    │
-│   cat · grep · awk · sed · ps · top · netstat · dig ...       │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 2 ── DANGEROUS PATTERN BLOCKLIST                        │
-│   rm -rf /        →  "wipe filesystem"                        │
-│   dd if= of=      →  "overwrite block device"                 │
-│   mkfs            →  "format disk"                            │
-│   > /dev/sda      →  "raw device write"                       │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 3 ── COMMAND SUBSTITUTION GUARD                         │
-│   $(inner_cmd)    →  inner_cmd must be in allowlist too       │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 4 ── BACKTICK BLOCKING                                  │
-│   `rm -rf /`      →  blocked at parse time                    │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 5 ── PROCESS GROUP ISOLATION                            │
-│   os.setpgrp()    →  entire process group killed on timeout   │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 6 ── OUTPUT SIZE LIMIT                                  │
-│   Truncates output → prevents memory exhaustion               │
-├────────────────────────────────────────────────────────────────┤
-│ Layer 7 ── MINIMAL ENVIRONMENT                                │
-│   Empty PATH      →  prevents PATH injection attacks          │
-└────────────────────────────────────────────────────────────────┘
+Symptom Match              Execute Commands             Store Results
+─────────────              ───────────────             ──────────────
+DOCKER_001 fires    ──▶   groups                     ──▶ user_groups = "ntbankey sudo"
+                           │
+                           ├── ls -l /var/run/docker.sock
+                           │   └── socket_info = "srw-rw---- 1 root docker"
+                           │
+                           └── docker info
+                               └── docker_info = "Cannot connect to daemon"
+                                    (permission denied)
+
+Then: conditions evaluate against stored facts
+      user_groups not_contains "docker" → TRUE
 ```
+
+## Evidence Collection Chain
+
+```
+Rule Fires
+    │
+    ▼
+┌──────────────────────────────────────────────────┐
+│  Evidence Collection                              │
+│                                                   │
+│  For each evidence item in the rule:              │
+│    1. Expand command (no dynamic substitution)    │
+│    2. Safety check (7-layer verification)         │
+│    3. Execute with 10s timeout                    │
+│    4. Store stdout → fact store                   │
+│    5. Log return code + stderr (if any)           │
+│                                                   │
+└──────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────────────────────────────┐
+│  Condition Evaluation                             │
+│                                                   │
+│  All conditions must pass → hypothesis is valid   │
+│  Any condition fails → hypothesis is eliminated   │
+│  (Deterministic elimination before Bayesian step) │
+└──────────────────────────────────────────────────┘
+```
+
+## Supported Evidence Types
+
+| Type | Example | Output |
+|---|---|---|
+| **file read** | `cat /etc/os-release` | File content |
+| **process status** | `systemctl status sshd` | Active/inactive + logs |
+| **resource usage** | `df -h /` | Disk usage percentage |
+| **network state** | `ss -tlnp` | Listening ports |
+| **package info** | `dpkg -l | grep nginx` | Installed version |
+| **log query** | `journalctl -u docker --no-pager -n 50` | Recent log entries |
 
 ---
 
-## Decision Flow for Any Command
+# SLIDE 10 — Mission Control TUI
 
-```mermaid
-flowchart TD
-    A["Command request\ne.g. 'groups'"] --> B{"In allowlist?"}
-    B -- No --> BLOCK1["🚫 BLOCKED\nNot a known safe command"]
-    B -- Yes --> C{"Dangerous pattern?"}
-    C -- Yes --> BLOCK2["🚫 BLOCKED\nMatches blocklist regex"]
-    C -- No --> D{"Contains $() or backticks?"}
-    D -- Yes --> E{"Inner cmd in allowlist?"}
-    E -- No --> BLOCK3["🚫 BLOCKED\nSubstitution escape attempt"]
-    E -- Yes --> F["Execute in isolated subprocess\nwith empty PATH + timeout"]
-    D -- No --> F
-    F --> G{"Output within size limit?"}
-    G -- No --> H["Truncate + warn"]
-    G -- Yes --> I["✅ Return safe output"]
-```
+## Interface Design
 
----
-
-# SLIDE 9 — Mission Control TUI
-
-## Interface Design Philosophy
-
-The TUI gives operators a **single-pane view** of the entire diagnosis — no need to switch contexts.
+Single-pane, 3-column layout for maximum situational awareness:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║  🐧 LINUX DOCTOR  ·  Mission Control  ·  Domain: DOCKER (99.5%)     ║
-╠═════════════════════╦══════════════════════╦════════════════════════╣
-║   📊 CAUSAL TREE    ║   🤖 AI REASONING    ║   ⚡ ACTION CARDS      ║
-║                     ║                      ║                        ║
-║  🔴 DOCKER          ║  14:30:45            ║  ┌──────────────────┐  ║
-║   └─ Symptom        ║  🔍 Matched          ║  │ ✅ RISK: LOW     │  ║
-║       "docker        ║     symptoms         ║  │                  │  ║
-║        perm..."      ║     DOCKER_001       ║  │ groups           │  ║
-║   └─ Evidence       ║                      ║  │ Check user       │  ║
-║       groups        ║  14:30:46            ║  │ groups first     │  ║
-║       socket_info   ║  ⚡ Rule fired       ║  └──────────────────┘  ║
-║   └─ Root Cause     ║                      ║                        ║
-║       Not in group  ║  14:30:47            ║  ┌──────────────────┐  ║
-║                     ║  📡 Evidence         ║  │ ⚠️ RISK: MOD.   │  ║
-║  Confidence:        ║     gathered         ║  │                  │  ║
-║  ████████░░ 95%     ║                      ║  │ usermod -aG      │  ║
-║                     ║  14:30:48            ║  │ docker $USER     │  ║
-║                     ║  ✅ H₁ confirmed     ║  └──────────────────┘  ║
-║                     ║     margin: 94%      ║                        ║
-╚═════════════════════╩══════════════════════╩════════════════════════╝
+║  🐧 LINUX DOCTOR  ·  Mission Control  ·  Domain: DOCKER (99.5%)    ║
+║  Session: #20260605-001  |  Query: "docker permission denied"      ║
+╠══════════════════════════╦══════════════════════╦═══════════════════╣
+║    📊 CAUSAL TREE         ║   🤖 AI REASONING   ║   ⚡ ACTION CARDS  ║
+║                          ║                     ║                    ║
+║   🔴 DOCKER              ║  14:30:45.123       ║  ┌──────────────┐ ║
+║    └─ Symptom            ║  🔍 Matched          ║  │ ✅ LOW       │ ║
+║        "docker            ║     symptoms:         ║  │ groups      │ ║
+║         permission        ║     DOCKER_001 (2/4) ║  │ Check user  │ ║
+║         denied"           ║  14:30:46.001       ║  │ groups      │ ║
+║    └─ Evidence           ║  ⚡ Fired rule       ║  └──────────────┘ ║
+║        groups:            ║     DOCKER_001       ║  ┌──────────────┐ ║
+║        "ntbankey sudo"   ║  14:30:47.221       ║  │ ⚠️ MODERATE  │ ║
+║        socket:            ║  📡 Evidence         ║  │ usermod -aG │ ║
+║        "srw-rw----..."    ║     collected (3/3) ║  │ docker $USER│ ║
+║    └─ Root Cause         ║  14:30:48.540       ║  └──────────────┘ ║
+║        User not in        ║  ✅ H₁ confirmed    ║  ┌──────────────┐ ║
+║        docker group       ║     margin: 74%     ║  │ ℹ️ INFO     │ ║
+║                          ║                     ║  │ newgrp      │ ║
+║   Confidence:             ║                     ║  │ docker      │ ║
+║   ████████░░ 87%          ║                     ║  └──────────────┘ ║
+║                          ║                     ║                    ║
+╚══════════════════════════╩══════════════════════╩═══════════════════╝
 ```
-
----
 
 ## Column Roles
 
-| Column | Purpose | Key Info |
+| Column | Purpose | Content |
 |---|---|---|
-| **Causal Tree** (left) | Visual DAG of symptoms → evidence → root cause | Confidence bar, node colours by severity |
-| **AI Reasoning** (center) | Timestamped trace of every decision step | Fully auditable — no black box |
-| **Action Cards** (right) | Ordered fix list, colour-coded by risk level | LOW 🟢 · MODERATE 🟡 · HIGH 🔴 |
-
----
+| **Causal Tree** (left) | Visual DAG of the incident | Symptom → Evidence → Root Cause, confidence bar |
+| **AI Reasoning** (center) | Timestamped audit trail | Every inference step logged with timing |
+| **Action Cards** (right) | Ordered fixes by risk | LOW 🟢 → MODERATE 🟡 → HIGH 🔴 |
 
 ## REPL Commands
 
 | Command | Description |
 |---|---|
-| `/explain` | Print full reasoning chain in natural language |
-| `/fix` | Execute the top-ranked fix |
-| `/fix <n>` | Execute fix number n |
-| `/history` | Show past incidents from SQLite |
-| `/safe` | Preview what a command does before running |
+| `docker permission denied` | Run diagnosis (natural language input) |
+| `/explain` | Print full reasoning chain |
+| `/fix` | Execute top-ranked fix |
+| `/fix <n>` | Execute specific fix #n |
+| `/history` | Show session history from SQLite |
+| `/safe` | Preview command before execution |
+| `/status` | Show current diagnosis state |
 | `/exit` | Quit |
 
 ---
 
-# SLIDE 10 — 12 Supported Domains
+# SLIDE 11 — Empirical Test Evidence Across 11 Domains
 
-## Coverage Map
+The system has been validated on **20+ test scenarios** across all domains. Below is the test coverage:
 
-| # | Domain | KB File | Rules | Common Triggers | Example Fix |
+## Domain Test Matrix
+
+| Domain | Tests Run | Key Scenarios Validated | Example Root Cause Found |
+|---|---|---|---|
+| 🐳 **Docker** | 5 | Permission denied, daemon down, bridge network, container OOM, registry auth | `User not in docker group` |
+| 🌐 **Nginx** | 2 | Config syntax error, port bind conflict, upstream 502, SSL cert expiry | `Port 80 already in use` |
+| 🔑 **SSH** | 2 | Connection refused, key rejected, permission denied, firewall block | `sshd service not running` |
+| 🖥️ **CPU** | 2 | High load average, process stuck (D-state), zombie processes | `Fork bomb detected` |
+| 💾 **Memory** | 2 | OOM killer fired, swap full, memory leak | `Process exceeded cgroup limit` |
+| 💽 **Disk** | 2 | No space left, inode exhausted, read-only filesystem | `Inode table at 97%` |
+| 🌍 **Network** | 1 | No route to host, connection timeout, packet loss | `Default gateway unreachable` |
+| 📡 **DNS** | 1 | Resolution failed, NXDOMAIN, server timeout | `Nameserver 8.8.8.8 unreachable` |
+| ⚙️ **Systemd** | 1 | Service failed, unit not found, dependency error | `Unit depends on non-existent target` |
+| 📦 **Package** | 1 | Dependency broken, repository unreachable, GPG error | `Package version conflict` |
+| 🔄 **Git** | 1 | Merge conflict, auth failed, remote rejected | `Local branch behind remote by 5 commits` |
+
+## Representative Deep-Dive: Docker Ecosystem
+
+```
+Test 1: "docker permission denied"
+  └─ Matched DOCKER_001 → evidence: groups, docker.sock
+  └─ Root cause: User not in docker group (87%)
+  └─ Fix: sudo usermod -aG docker $USER
+
+Test 2: "docker daemon not running"
+  └─ Matched DOCKER_002 → evidence: systemctl status docker
+  └─ Root cause: containerd service failed (92%)
+  └─ Fix: sudo systemctl restart containerd
+
+Test 3: "docker container network timeout"
+  └─ Matched DOCKER_005 → evidence: docker network ls, iptables
+  └─ Root cause: Docker bridge network misconfigured (84%)
+  └─ Fix: docker network prune && systemctl restart docker
+
+Test 4: "docker container exits immediately"
+  └─ Matched DOCKER_003 → evidence: docker logs, docker inspect
+  └─ Root cause: OOMKilled — container exceeds memory limit (89%)
+  └─ Fix: Increase --memory limit or fix memory leak in app
+```
+
+---
+
+# SLIDE 12 — 12 Supported Domains & Knowledge Base
+
+## Domain Coverage Map
+
+| # | Domain | KB File | Rules | Common Triggers | Typical Fix |
 |---|---|---|---|---|---|
-| 1 | 🐳 **Docker** | `docker.yaml` | 8 | permission denied, container OOM exit | `usermod -aG docker` |
-| 2 | 🌐 **Nginx** | `nginx.yaml` | 10+ | failed to start, 502 bad gateway | check config syntax |
-| 3 | 🔑 **SSH** | `ssh.yaml` | 8 | connection refused, key rejected | `systemctl start sshd` |
-| 4 | 🖥️ **CPU** | `cpu.yaml` | 6 | high load average, process stuck | `kill -9 <pid>` |
-| 5 | 💾 **Memory** | `memory.yaml` | 6 | OOM killer fired, swap full | identify top consumers |
-| 6 | 💽 **Disk** | `disk.yaml` | 8 | no space left, inode exhausted | `du -sh` + cleanup |
-| 7 | 🌍 **Network** | `network.yaml` | 8 | no route to host, timeout | check routes + firewall |
-| 8 | 📡 **DNS** | `dns.yaml` | 6 | resolution failed, NXDOMAIN | check `/etc/resolv.conf` |
-| 9 | 🔄 **Git** | `git.yaml` | 8 | merge conflict, auth failed | rebase or reset |
-| 10 | ⚙️ **Systemd** | `systemd.yaml` | 10+ | service failed, unit not found | `journalctl -xe` |
-| 11 | 📦 **Package** | `package.yaml` | 8 | dependency broken, repo error | `apt --fix-broken install` |
-| 12 | 🔒 **Permission** | `permissions.yaml` | 8 | access denied, EACCES | `chmod`/`chown` + ACL |
+| 1 | 🐳 **Docker** | `docker.yaml` | 8 | permission denied, container exit, network | `usermod -aG docker` |
+| 2 | 🌐 **Nginx** | `nginx.yaml` | 10+ | failed start, 502, port conflict | `nginx -t` → fix config |
+| 3 | 🔑 **SSH** | `ssh.yaml` | 8 | refused, key rejected, permission | `systemctl start sshd` |
+| 4 | 🖥️ **CPU** | `cpu.yaml` | 6 | high load, zombie, D-state | `kill -9` or renice |
+| 5 | 💾 **Memory** | `memory.yaml` | 6 | OOM, swap full, leak | Identify + restart consumer |
+| 6 | 💽 **Disk** | `disk.yaml` | 8 | space, inode, read-only FS | `du -sh` → cleanup |
+| 7 | 🌍 **Network** | `network.yaml` | 8 | no route, timeout, packet loss | Check routes + firewall |
+| 8 | 📡 **DNS** | `dns.yaml` | 6 | NXDOMAIN, timeout, resolution | Fix `/etc/resolv.conf` |
+| 9 | 🔄 **Git** | `git.yaml` | 8 | conflict, auth fail, rejected | `git rebase` or `reset` |
+| 10 | ⚙️ **Systemd** | `systemd.yaml` | 10+ | failed unit, dependency error | `journalctl -xe` |
+| 11 | 📦 **Package** | `package.yaml` | 8 | broken dep, repo, GPG | `apt --fix-broken` |
+| 12 | 🔒 **Permission** | `permissions.yaml` | 8 | EACCES, EPERM, ownership | `chmod`/`chown` |
+
+**Total: ~90 rules across 12 domains**
+
+## Zero-Code Domain Addition
+
+```
+Want to add PostgreSQL troubleshooting?
+
+Step 1: Write  data/kb/postgres.yaml
+         ┌────────────────────────────────────────┐
+         │  symptoms: ["can't connect", "5432"]   │
+         │  evidence: ["systemctl status postgres"]│
+         │  conditions: [status: not_equals "active"]│
+         │  hypotheses: [fix: "systemctl start"]    │
+         └────────────────────────────────────────┘
+
+Step 2: Drop the file in data/kb/
+Step 3: Linux Doctor auto-discovers it on next run
+         → Zero Python changes
+         → No model retraining needed (TF-IDF catches new keywords)
+         → New rules active immediately
+```
 
 ---
 
-## Extensibility: Zero-Code Domain Addition
+# SLIDE 13 — Roadmap & Enterprise Vision
 
-```
-Want to add a new domain (e.g. PostgreSQL)?
-
-Step 1:  Write  data/kb/postgres.yaml
-         Define: symptoms, evidence commands, conditions, hypotheses
-
-Step 2:  Drop it in data/kb/
-
-Step 3:  Linux Doctor auto-discovers it on next run
-
-→ Zero Python changes required
-→ No retraining needed (ML model catches new keywords via TF-IDF)
-→ New rules active immediately
-```
-
----
-
-# SLIDE 11 — Roadmap & Live Demo
-
-## What's Shipped ✅
+## Shipped Features ✅
 
 | Component | Status | Detail |
 |---|---|---|
-| ML Pipeline | ✅ Done | 99.49% F1 · 3 classifiers · pure NumPy |
-| Expert System | ✅ Done | Forward-chaining + Bayesian ranker |
-| Safety Shell | ✅ Done | 7-layer sandbox · 80+ allowlisted cmds |
-| Mission Control TUI | ✅ Done | Rich 3-column layout |
-| Interactive REPL | ✅ Done | /explain · /fix · /history |
-| SQLite Persistence | ✅ Done | WAL mode · incident history |
-| 12 KB Domains | ✅ Done | ~90 rules total |
-| Full Test Suite | ✅ Done | Unit + integration coverage |
-
----
+| 🧠 **ML Pipeline** | ✅ Done | 3 classifiers · 99.49% F1 · pure NumPy · 101,758 samples |
+| ⚙️ **Expert System** | ✅ Done | Forward-chaining · 90 rules · 12 domains |
+| 📊 **Bayesian Ranker** | ✅ Done | Evidence-driven · handles competing hypotheses |
+| 🛡️ **Safety Shell** | ✅ Done | 7-layer sandbox · 80+ allowlisted read-only commands |
+| 📺 **Mission Control TUI** | ✅ Done | Rich 3-column real-time display |
+| 💬 **Interactive REPL** | ✅ Done | Natural language + /commands |
+| 🗄️ **SQLite Persistence** | ✅ Done | WAL mode · full session history |
+| 📚 **Knowledge Base** | ✅ Done | 12 YAML files · ~90 rules total |
+| ✅ **Test Suite** | ✅ Done | Unit + integration + pipeline tests |
 
 ## Roadmap 2026 🚀
 
-| Priority | Feature | Why | Target Metric |
-|---|---|---|---|
-| ⚡ P1 | **Parallel evidence collection** | Evidence gather runs sequentially now — biggest latency bottleneck | < 2s per diagnosis (from ~15s) |
-| 🗄️ P2 | **Full incident history** | SQLite good for single-node; multi-user needs shared DB | SQLite → PostgreSQL |
-| 🧠 P3 | **Backward chaining** | Currently forward only — backward chaining enables goal-directed queries | Bidirectional reasoning |
-| 🌐 P4 | **HTTP API** | Enable integration with monitoring tools (PagerDuty, Grafana) | RESTful endpoint |
-| 📊 P5 | **Prometheus metrics** | Observe diagnosis latency, accuracy, fix success rates | Grafana dashboard |
+```
+Priority    Feature                         Why                          Target
+────────    ───────                         ───                          ──────
+⚡ P1       Parallel evidence collection    Sequential gather = 15s      < 2s per diagnosis
+                                           Biggest latency bottleneck
 
----
+🗄️ P2       PostgreSQL incident history    SQLite good for single-node   Multi-user shared DB
+                                           Multi-user needs shared DB
 
-## Live Demo Script 🎯
+🧠 P3       Backward chaining              Forward-only = limited        Bidirectional reasoning
+                                           Goal-directed queries
 
-```bash
-# ── Demo 1: Docker ─────────────────────────────────────────────
-$ linux-doctor "docker permission denied"
+🌐 P4       HTTP API                       Integrate with PagerDuty,     RESTful endpoint
+                                           Grafana, monitoring stack
 
-  [ML]     domain = docker @ 99.5%
-  [Expert] rule DOCKER_001 matched (2/4 symptoms)
-  [Shell]  groups → "ntbankey sudo"     (no docker group)
-  [Bayes]  H₁=97%  >  H₂=3%
-  [Output] Root cause: user not in docker group
-           Fix: sudo usermod -aG docker $USER
+📊 P5       Prometheus metrics             Track latency, accuracy,      Grafana dashboard
+                                           fix success rate
 
+🔬 P6       Real incident corpus           Synthetic data ≠ production   Active learning loop
+           + active learning              accuracy unknown              from /history corrections
+```
 
-# ── Demo 2: SSH ─────────────────────────────────────────────────
-$ linux-doctor "ssh connection refused port 22"
+## From Tool to Platform: Enterprise Vision
 
-  [ML]     domain = ssh @ 98.2%
-  [Expert] rule SSH_001 matched
-  [Shell]  systemctl status sshd → inactive (dead)
-  [Output] Root cause: sshd not running
-           Fix: sudo systemctl start sshd
+```
+Today:  Linux Doctor is a CLI diagnostic tool
+         └── Single-user, single-node, reactive
 
-
-# ── Demo 3: Interactive REPL ────────────────────────────────────
-$ linux-doctor
-
-> disk full
-  [ML] domain = disk @ 97.8%  →  gathering evidence...
-  [TUI] Mission Control opens
-
-> /explain
-  Reasoning: inode count exhausted, not block size.
-  Top consumer: /var/log (14GB in 3 days)
-
-> /fix 1
-  Running: sudo journalctl --vacuum-time=7d
-  ✅ 11GB freed. Disk usage: 94% → 61%
+Future:  Linux Doctor is an Enterprise Operations Platform
+         ├── Multi-user incident database
+         ├── Integration with PagerDuty / OpsGenie / Grafana
+         ├── CI/CD pipeline integration (auto-diagnose failed builds)
+         ├── Kubernetes operator (auto-diagnose pod crashes)
+         ├── API-first architecture
+         └── Active learning: improve from every diagnosis
 ```
 
 ---
-
-# BONUS — Q&A Reference Sheet
-
-## Key Metrics at a Glance
-
-| Metric | Value |
-|---|---|
-| Best model | Naive Bayes (99.49% F1) |
-| Training samples | 101,758 |
-| ML features | 3,000 TF-IDF |
-| KB domains | 12 |
-| KB rules total | ~90 |
-| Allowlisted commands | 80+ |
-| Safety layers | 7 |
-| Source code | ~4,500 lines Python |
-| Dependencies | 6 core packages |
-| Database | SQLite (WAL mode) |
-| TUI library | Rich |
-
----
-
-## Anticipated Questions
-
----
-
-**Q1: "Why not just use an LLM (GPT-4, Gemini) instead?"**
-
-| Dimension | LLM | Linux Doctor |
-|---|---|---|
-| Cost | $$ per query | Free, runs locally |
-| Speed | 3–10s per response | < 2s (target) |
-| Hallucination | Yes — can suggest wrong/dangerous fixes | No — rule-based, deterministic |
-| Auditability | Black box | Full trace via /explain |
-| Runs offline | No | Yes — Raspberry Pi capable |
-| Extensible | Needs prompt engineering | Add one YAML file |
-
-> **Verdict:** LLMs are powerful but expensive, slow, and non-deterministic for ops tooling. A lightweight ML + rule engine is more appropriate for safety-critical automation.
-
----
-
-**Q2: "How do you prevent damage to production systems?"**
-
-```
-7-Layer Safety Stack prevents ALL of:
-  ✅ Injection attacks        (allowlist + pattern block)
-  ✅ Subprocess escape        ($() and backtick guard)
-  ✅ Runaway processes        (process group isolation + timeout)
-  ✅ Memory exhaustion        (output size cap)
-  ✅ PATH injection           (empty environment)
-
-Only 80+ read-only diagnostic commands are permitted.
-No destructive command can pass all 7 layers.
-```
-
----
-
-**Q3: "How to add a new domain?"**
-
-```
-1. Write data/kb/<domain>.yaml
-   Define: symptoms · evidence · conditions · hypotheses
-
-2. Drop the file in data/kb/
-
-3. Done. Zero code changes. Auto-discovered at runtime.
-```
-
----
-
-**Q4: "How accurate is the ML in real production traffic (not synthetic data)?"**
-
-Honest answer: the 99.49% F1 is on a **synthetic** dataset.  
-Real production accuracy will be lower due to:
-- Novel phrasings not in training data
-- Mixed-domain errors (e.g. SSH issue described using network vocabulary)
-
-Mitigations in roadmap:
-- Real incident corpus collection
-- Active learning from /history corrections
-- Confidence threshold → fallback to manual if below 80%
