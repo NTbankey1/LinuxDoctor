@@ -7,8 +7,8 @@
   "test_size": 20351,
   "results": {
     "naive_bayes": 0.9949,
-    "logistic_regression": 0.9771,
-    "linear_svm": 0.9916
+    "logistic_regression": 0.9686,
+    "linear_svm": 0.9923
   },
   "best_model": "naive_bayes",
   "best_f1": 0.9949
