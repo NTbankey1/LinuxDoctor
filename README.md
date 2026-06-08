@@ -4,7 +4,7 @@
 ![AI](https://img.shields.io/badge/AI-Hybrid_Expert_System-success)
 ![ML](https://img.shields.io/badge/ML-From_Scratch_(NumPy)-orange)
 ![Accuracy](https://img.shields.io/badge/F1_Score-99.49%25-brightgreen)
-![Status](https://img.shields.io/badge/Status-Production_Ready-blue)
+![Status](https://img.shields.io/badge/Status-Academic_Project-blue)
 
 > **Nhập bất kỳ sự cố Linux nào bằng ngôn ngữ tự nhiên — Linux Doctor sẽ tự động dự đoán miền sự cố (Domain), chẩn đoán nguyên nhân gốc rễ, giải thích logic suy luận và đề xuất các lệnh khắc phục an toàn thông qua giao diện điều khiển (Mission Control TUI).**
 

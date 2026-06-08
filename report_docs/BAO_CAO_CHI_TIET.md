@@ -1,8 +1,8 @@
 # 💎 BÁO CÁO KỸ THUẬT TOÀN DIỆN: LINUX DOCTOR HYBRID AI
 
-**Ngày phát hành:** 02/06/2026  
-**Trạng thái:** Sẵn sàng cho Môi trường Sản xuất (Production-Ready)  
-**Phân loại:** Tài liệu Mật (Confidential - Internal Use Only)
+**Ngày phát hành:** 02/06/2026
+**Trạng thái:** Đồ án môn học (Academic Project)
+**Phân loại:** Tài liệu công khai — phát hành kèm mã nguồn theo giấy phép MIT
 
 ---
 
