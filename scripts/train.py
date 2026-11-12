@@ -35,19 +35,19 @@ from pathlib import Path
 # Add project root for imports when run as script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from linux_doctor.infrastructure.logger import log
+from linux_doctor.ml.evaluator import Evaluator
+from linux_doctor.ml.linear_svm import LinearSVM
+from linux_doctor.ml.logistic_regression import LogisticRegression
+from linux_doctor.ml.naive_bayes import MultinomialNaiveBayes
+from linux_doctor.ml.tfidf_engine import TFIDFVectorizer
 from linux_doctor.ml.trainer import (
-    load_dataset,
-    train_test_split_manual,
-    save_model,
     DATA_PATH,
     MODEL_DIR,
+    load_dataset,
+    save_model,
+    train_test_split_manual,
 )
-from linux_doctor.ml.tfidf_engine import TFIDFVectorizer
-from linux_doctor.ml.naive_bayes import MultinomialNaiveBayes
-from linux_doctor.ml.logistic_regression import LogisticRegression
-from linux_doctor.ml.linear_svm import LinearSVM
-from linux_doctor.ml.evaluator import Evaluator
-from linux_doctor.infrastructure.logger import log
 
 
 def train_model(

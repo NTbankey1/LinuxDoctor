@@ -13,12 +13,6 @@ dependencies = [
     "rich>=13.7.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.3.0",
-]
-
 [project.scripts]
 linux-doctor = "linux_doctor.cli.app:run"
 
@@ -53,6 +47,7 @@ addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
 
 [dependency-groups]
+# Dev dependencies are installed by `uv sync` (and by CI) by default.
 dev = [
     "pytest>=9.0.3",
     "ruff>=0.15.0",

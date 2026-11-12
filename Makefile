@@ -4,14 +4,14 @@ setup:
 	uv sync
 
 lint:
-	uv run ruff check .
+	uv run ruff check src/ tests/ scripts/
 
 format:
-	uv run ruff format .
-	uv run ruff check --fix .
+	uv run ruff format src/ tests/ scripts/
+	uv run ruff check --fix src/ tests/ scripts/
 
 test:
-	uv run pytest
+	uv run pytest -v --tb=short
 
 clean:
 	rm -rf .pytest_cache

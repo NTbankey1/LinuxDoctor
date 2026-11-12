@@ -26,9 +26,9 @@ jobs:
         run: uv sync
 
       - name: Lint
-        run: uv run ruff check src/ tests/
+        run: uv run ruff check src/ tests/ scripts/
 
-      - name: Type check
+      - name: Import smoke check
         run: uv run python -c "import linux_doctor; print('Import OK')"
 
       - name: Run tests

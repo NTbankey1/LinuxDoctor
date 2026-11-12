@@ -1,6 +1,6 @@
 # 🐧 Linux Doctor — Hệ Thống Trí Tuệ Nhân Tạo Lai (Hybrid AI) Xử Lý Sự Cố
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB.svg?logo=python)
+![Python](https://img.shields.io/badge/Python-3.13+-3776AB.svg?logo=python)
 ![AI](https://img.shields.io/badge/AI-Hybrid_Expert_System-success)
 ![ML](https://img.shields.io/badge/ML-From_Scratch_(NumPy)-orange)
 ![Accuracy](https://img.shields.io/badge/F1_Score-99.49%25-brightgreen)
@@ -12,7 +12,7 @@
 
 ## 🌟 1. TỔNG QUAN DỰ ÁN (EXECUTIVE SUMMARY)
 
-**Linux Doctor** là một hệ thống tự động hóa vận hành IT đột phá dành cho các kỹ sư SRE và Sysadmin. Dự án được thiết kế với kiến trúc **Hybrid AI (AI Lai)**, kết hợp giữa tốc độ nhận thức của Machine Learning và độ chính xác tuyệt đối của Hệ thống Chuyên gia (Expert System). 
+**Linux Doctor** là một hệ thống tự động hóa vận hành IT dành cho các kỹ sư SRE và Sysadmin. Dự án được thiết kế với kiến trúc **Hybrid AI (AI Lai)**, kết hợp giữa tốc độ nhận thức của Machine Learning và khả năng suy luận có kiểm chứng của Hệ thống Chuyên gia (Expert System).
 
 Toàn bộ hệ thống được xây dựng hoàn toàn độc lập (from scratch), không phụ thuộc vào các framework nặng nề như PyTorch hay Scikit-Learn, giúp hệ thống cực kỳ nhẹ, bảo mật và dễ dàng audit.
 
@@ -67,15 +67,17 @@ graph TD
 
 ## 🧠 3. HIỆU NĂNG MÔ HÌNH HỌC MÁY (ML PIPELINE)
 
-Hệ thống Machine Learning đã được nâng cấp quy mô (Scale-up) với tập dữ liệu **101.758 mẫu** được phân bổ đồng đều qua 12 domain sự cố Linux (Docker, CPU, Disk, Memory, Network, DNS, v.v.). Toàn bộ các thuật toán (TF-IDF, Naive Bayes, Logistic Regression, Linear SVM) đều được viết thủ công bằng **NumPy**.
+Hệ thống Machine Learning được huấn luyện trên tập dữ liệu **101.758 mẫu** được phân bổ qua 12 domain sự cố Linux (Docker, CPU, Disk, Memory, Network, DNS, v.v.). Toàn bộ các thuật toán (TF-IDF, Naive Bayes, Logistic Regression, Linear SVM) đều được viết thủ công bằng **NumPy**.
 
-### Thành Tích Vượt Trội của Multinomial Naive Bayes
-*   **F1-Score: 99.49%**
-*   **Chi tiết:** Mô hình Naive Bayes thể hiện sức mạnh tuyệt đối khi phân tích dữ liệu dạng Text. Nó xử lý xuất sắc các từ vựng gây nhiễu, cho ra kết quả phân loại gần như hoàn hảo. Dưới đây là ma trận nhầm lẫn (Confusion Matrix) chứng minh tỷ lệ dự đoán sai (False Positives) ở mức cực tiểu.
+> **Lưu ý về dữ liệu:** `data/raw/linux_issues.jsonl` là dữ liệu **tổng hợp (synthetic)**, được sinh từ các template trong `scripts/generate_dataset.py` (có mở rộng tổ hợp và song ngữ Anh–Việt). Các chỉ số bên dưới phản ánh tập kiểm thử có cùng phân phối tổng hợp, không đại diện cho độ chính xác trên log thực tế ngoài production.
+
+### Kết quả của Multinomial Naive Bayes trên tập kiểm thử
+*   **Weighted F1-Score: 99.49%** (theo `models/eval_report.json`)
+*   **Chi tiết:** Mô hình Naive Bayes đạt kết quả cao trên dữ liệu văn bản và xử lý khá tốt các từ vựng gây nhiễu. Ma trận nhầm lẫn dưới đây cho thấy số lượng dự đoán sai rất thấp trên tập kiểm thử tổng hợp.
 
 ![Naive Bayes Performance](Pictures/model/naive_bayes.png)
 
-*(Hệ thống cũng đi kèm các mô hình Logistic Regression (99.2%) và Linear SVM (99.4%) để dự phòng và tính toán xác suất tự tin).*
+*(Hệ thống cũng đi kèm Logistic Regression — Weighted F1 96.86% — và Linear SVM — Weighted F1 99.23% — để dự phòng và tính toán xác suất tự tin).*
 
 ---
 
@@ -103,7 +105,9 @@ AI kiểm tra bảng định tuyến, tường lửa (Firewall) và các file c�
 
 ## 🚀 5. HƯỚNG DẪN CÀI ĐẶT NHANH (QUICK START)
 
-Bạn có thể trải nghiệm toàn bộ sức mạnh của Linux Doctor (bao gồm các Model đã huấn luyện sẵn) thông qua vài lệnh đơn giản.
+Bạn có thể trải nghiệm Linux Doctor (bao gồm các model đã huấn luyện sẵn) thông qua vài lệnh đơn giản.
+
+**Yêu cầu:** Python 3.13+ và [uv](https://docs.astral.sh/uv/). Installer tự động sẽ cài `uv` nếu chưa có.
 
 **Cách 1: Cài đặt tự động (Linux/macOS)**
 ```bash
@@ -115,19 +119,22 @@ curl -fsSL https://raw.githubusercontent.com/NTbankey1/LinuxDoctor/main/scripts/
 git clone https://github.com/NTbankey1/LinuxDoctor.git
 cd LinuxDoctor
 make setup
-linux-doctor "disk is full on /var"
+uv run linux-doctor "disk is full on /var"
 ```
 
 ---
 
 ## 🛠️ 6. NỢ KỸ THUẬT & LỘ TRÌNH PHÁT TRIỂN (ENGINEERING ROADMAP)
 
-Thông qua quá trình kiểm toán kiến trúc, hệ thống đang tập trung vào 4 cột mốc chính để đạt chuẩn Doanh nghiệp (Enterprise-Ready):
+Thông qua quá trình kiểm toán kiến trúc, các hạng mục lớn đã và đang được triển khai như sau:
 
-1.  🛡️ **Bảo Mật (P0):** Nâng cấp module `ShellExecutor` từ Denylist (chặn lệnh xấu) sang **Allowlist** (chỉ cho phép các lệnh đã phê duyệt) nhằm triệt tiêu hoàn toàn rủi ro Command Injection.
-2.  ⚡ **Hiệu Năng (P1):** Đưa cơ chế thu thập bằng chứng từ chạy tuần tự sang chạy song song (**Parallel Execution**), rút ngắn thời gian chẩn đoán từ 15 giây xuống dưới 2 giây.
-3.  🗄️ **Lưu Trữ (P2):** Thay thế việc lưu trạng thái trên RAM bằng cơ sở dữ liệu (SQLite/PostgreSQL) để duy trì lịch sử sự cố (Incident History).
-4.  🧠 **Suy Luận (P3):** Áp dụng kiến trúc Backward Chaining để xác minh chéo nguyên nhân.
+**Đã triển khai:**
+1.  🛡️ **Bảo Mật:** `ShellRunner` dùng kiến trúc **Allowlist** kết hợp kiểm tra mẫu lệnh nguy hiểm và shell metacharacter, giảm thiểu rủi ro Command Injection.
+2.  🗄️ **Lưu Trữ:** Trạng thái phiên và lịch sử sự cố được lưu trong **SQLite** (WAL mode) thay vì chỉ giữ trên RAM.
+
+**Đang phát triển:**
+3.  ⚡ **Hiệu Năng (P1):** Chuyển cơ chế thu thập bằng chứng từ chạy tuần tự sang chạy song song (**Parallel Execution**) để rút ngắn thời gian chẩn đoán.
+4.  🧠 **Suy Luận (P2):** Áp dụng kiến trúc Backward Chaining để xác minh chéo nguyên nhân.
 
 ---
 
