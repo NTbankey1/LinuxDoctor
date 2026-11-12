@@ -14,8 +14,8 @@ import hashlib
 import json
 import random
 import re
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 DATA_PATH = Path("data/raw/linux_issues.jsonl")
 SEED = 42

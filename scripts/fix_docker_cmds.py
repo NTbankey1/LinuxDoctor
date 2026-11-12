@@ -2,7 +2,7 @@
 """Fix Docker evidence commands that are blocked by SafetyChecker."""
 import yaml
 
-with open("data/kb/docker.yaml", "r") as f:
+with open("data/kb/docker.yaml") as f:
     content = f.read()
 
 old_state = """      - hypothesis_id: "container_crash_loop"
@@ -46,7 +46,7 @@ try:
     data = yaml.safe_load(open("data/kb/docker.yaml"))
     rules = data.get("rules", [])
     print(f"  Valid! {len(rules)} rules loaded")
-    
+
     # Check all evidence commands start with allowed commands
     blocked = 0
     for rule in rules:

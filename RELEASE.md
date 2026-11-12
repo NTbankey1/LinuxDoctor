@@ -4,6 +4,8 @@
 **Date:** 2026-06-03
 **Status:** ✅ READY FOR PUBLICATION
 
+> **Lưu ý:** Đây là ảnh chụp (snapshot) trạng thái tại thời điểm 2026-06-03. Số liệu và trạng thái kiểm thử có thể đã thay đổi; xem README và CI cho trạng thái hiện tại.
+
 ---
 
 ## 1. System Overview
@@ -142,6 +144,8 @@ Key Features:
 
 ## 7. Test Results
 
+> **Lưu ý lịch sử:** Số liệu dưới đây là kết quả tại thời điểm phát hành 0.2.0 (2026-06-03), không phải trạng thái hiện tại của repository. Các số liệu lịch sử được giữ nguyên; không thay thế bằng kết quả mới khi chưa chạy lại đầy đủ.
+
 ```
 143 tests collected, 141 passed, 2 failed, 1 lint warning
 
@@ -169,6 +173,8 @@ Known Flaky/Failing:
   • 1 ruff lint warning: f-string without placeholders in app.py:171
 ```
 
+**Kiểm tra lại ngày 2026-11-12:** `uv run pytest -v --tb=short` → **143 passed**. Kết quả 141 passed / 2 failed ở trên vẫn được giữ làm mốc lịch sử của bản phát hành 0.2.0.
+
 ---
 
 ## 8. Project Metrics
@@ -184,7 +190,7 @@ Known Flaky/Failing:
 | Next-gen schemas | 3 files, 1,757 lines |
 | Dataset samples | 101,758 labeled |
 | Classes | 12 Linux domains (8,500/domain avg) |
-| Best model accuracy | 99.49% (Naive Bayes) |
+| Best model weighted F1 | 99.49% (Naive Bayes) |
 | Scripts | install.sh, train.py, test_demo.sh, fix_docker_cmds.py |
 | GitHub Actions | CI configured (lint + test + KB validate) |
 
@@ -194,11 +200,11 @@ Known Flaky/Failing:
 
 ```bash
 # Option A: One-liner installer
-curl -fsSL https://raw.githubusercontent.com/<user>/LinuxDoctor/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NTbankey1/LinuxDoctor/main/scripts/install.sh | bash
 
 # Option B: Manual install
-git clone https://github.com/<user>/LinuxDoctor
-cd linux-doctor
+git clone https://github.com/NTbankey1/LinuxDoctor
+cd LinuxDoctor
 uv sync
 
 # Train ML model (pre-trained models included)
@@ -214,7 +220,7 @@ bash scripts/test_demo.sh
 uv run pytest
 
 # Lint check
-uv run ruff check src/ tests/
+uv run ruff check src/ tests/ scripts/
 ```
 
 ---
